@@ -1,0 +1,1 @@
+"""Philatelic catalog application package."""

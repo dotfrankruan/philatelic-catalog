@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.sqlite3
+*.db
+*.egg-info/
+.DS_Store
