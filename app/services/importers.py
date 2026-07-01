@@ -429,7 +429,7 @@ def build_parsed_item(
         tracking_number=tracking_number,
         source_relpath=source_relpath,
         archive_id=archive_id,
-        origin=None,
+        origin=origin,
         destination=None,
         sent_on=None,
         received_on=None,

@@ -78,7 +78,7 @@ def test_build_parsed_item_infers_tracking_and_flags(tmp_path: Path) -> None:
     assert parsed.tracking_number == "7000440251050"
     assert parsed.source_relpath == "Mainland China/Postcards/[RETURN] 7000440251050 (Nanjing, Jiangsu)"
     assert len(parsed.archive_id) == 36
-    assert parsed.origin is None
+    assert parsed.origin == "Nanjing, Jiangsu"
     assert parsed.status is None
     assert parsed.is_returned is True
     assert "returned" in parsed.tags

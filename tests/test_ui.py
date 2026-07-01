@@ -66,6 +66,12 @@ def test_display_title_removes_embedded_bracket_tags() -> None:
     assert ui_module.display_title("[govt] CC554844919NZ [fragile]") == "CC554844919NZ"
 
 
+def test_display_location_uses_parenthetical_suffix_or_na() -> None:
+    assert ui_module.display_location("1217507254208 (Changzhou, Jiangsu)", None) == "Changzhou, Jiangsu"
+    assert ui_module.display_location("1217507254208", None) == "N/A"
+    assert ui_module.display_location("1217507254208 (Changzhou, Jiangsu)", "Manual Update") == "Manual Update"
+
+
 def test_home_page_uses_hierarchical_browser() -> None:
     with TestClient(app) as client:
         response = client.get("/?country=Australia")
@@ -73,3 +79,11 @@ def test_home_page_uses_hierarchical_browser() -> None:
         assert response.status_code == 200
         assert "Choose a mail type" in response.text
         assert "Mail Types" in response.text
+
+
+def test_admin_page_shows_location_field() -> None:
+    with TestClient(app) as client:
+        response = client.get("/admin/items/3")
+
+        assert response.status_code == 200
+        assert "Location" in response.text

@@ -284,6 +284,18 @@ def render_page(title: str, body: str) -> str:
         font-size: 13px;
       }}
 
+      .inline-meta {{
+        margin-top: 10px;
+        padding: 10px 12px;
+        border-radius: 14px;
+        background: rgba(255,255,255,0.62);
+        border: 1px solid rgba(213, 200, 180, 0.7);
+      }}
+
+      .inline-meta .meta-label {{
+        margin-bottom: 4px;
+      }}
+
       .button-link {{
         display: inline-block;
         border-radius: 999px;
@@ -505,8 +517,25 @@ def build_home_link(
 
 
 def display_title(raw_title: str) -> str:
+    base_title, _ = split_title_and_location(raw_title)
+    return base_title or raw_title
+
+
+def split_title_and_location(raw_title: str) -> tuple[str, str | None]:
     cleaned = normalize_text_for_display(DISPLAY_MARKER_RE.sub(" ", raw_title))
-    return cleaned or raw_title
+    match = re.search(r"\(([^()]*)\)\s*$", cleaned)
+    if not match:
+        return cleaned, None
+    location = normalize_text_for_display(match.group(1))
+    base_title = normalize_text_for_display(cleaned[: match.start()])
+    return base_title or cleaned, location or None
+
+
+def display_location(raw_title: str, stored_location: str | None) -> str:
+    if stored_location and normalize_text_for_display(stored_location):
+        return normalize_text_for_display(stored_location)
+    _, parsed_location = split_title_and_location(raw_title)
+    return parsed_location or "N/A"
 
 
 def normalize_text_for_display(value: str) -> str:
@@ -705,6 +734,7 @@ def render_home(
         item_cards = []
         for item in items:
             title_text = display_title(item.title)
+            location_text = display_location(item.title, item.origin)
             title_classes = "item-title"
             if item.is_returned:
                 title_classes += " returned"
@@ -713,6 +743,7 @@ def render_home(
             item_cards.append(
                 f'<a class="browse-card{" active" if item.id == selected_id else ""}" href="{build_home_link(q=q, country=country, category=category, item_id=item.id, page=page)}">'
                 f'<div class="{title_classes}">{escape(title_text)}</div>'
+                f'<div class="inline-meta"><div class="meta-label">Location</div><div class="item-sub">{escape(location_text)}</div></div>'
                 f'<div class="item-sub">{escape(subtitle_text)}</div>'
                 f"{returned_badge}"
                 f"</a>"
@@ -759,6 +790,7 @@ def render_home(
         meta_cards = [
             ("Country", selected_item.country),
             ("Category", selected_item.category),
+            ("Location", display_location(selected_item.title, selected_item.origin)),
             ("Tracking", selected_item.tracking_number or "None"),
             ("Archive ID", selected_item.archive_id),
             (
@@ -846,7 +878,7 @@ def render_home(
           <form method="get" action="/">
             <label>
               Search
-              <input type="search" name="q" value="{escape(q)}" placeholder="tracking, title, place" />
+              <input type="search" name="q" value="{escape(q)}" placeholder="tracking, title, location" />
             </label>
             <label>
               Country
@@ -907,6 +939,7 @@ def render_admin(item: Item, saved: bool = False) -> str:
           <form method="post" action="/admin/items/{item.id}">
             <label>Title<input type="text" name="title" value="{escape(item.title)}" /></label>
             <label>Tracking Number<input type="text" name="tracking_number" value="{escape(item.tracking_number or '')}" /></label>
+            <label>Location<input type="text" name="origin" value="{escape(item.origin or '')}" placeholder="N/A" /></label>
             <label>Country<input type="text" name="country" value="{escape(item.country)}" /></label>
             <label>Category<input type="text" name="category" value="{escape(item.category)}" /></label>
             <label>Tags
@@ -1208,12 +1241,14 @@ async def admin_item_save(
     else:
         title = get_form_value(form_data, "title")
         tracking_number = get_form_value(form_data, "tracking_number")
+        origin = get_form_value(form_data, "origin")
         country = get_form_value(form_data, "country")
         category = get_form_value(form_data, "category")
         tags = get_form_value(form_data, "tags")
         notes = get_form_value(form_data, "notes")
         item.title = title.strip() or item.title
         item.tracking_number = tracking_number.strip() or None
+        item.origin = origin.strip() or None
         item.country = country.strip() or item.country
         item.category = category.strip() or item.category
         item.notes = notes
