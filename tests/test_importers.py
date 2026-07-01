@@ -56,7 +56,7 @@ def test_build_parsed_item_infers_tracking_and_flags(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    parsed = build_parsed_item(item_dir, source_root, tmp_path / "managed_archive")
+    parsed = build_parsed_item(item_dir)
 
     assert parsed.country == "Mainland China"
     assert parsed.category == "Postcards"
@@ -108,3 +108,24 @@ def test_import_letters_archive_copies_and_persists(tmp_path: Path) -> None:
         assert all((archive_root / asset.path).exists() for asset in item.assets)
         assert len(item.assets) == 2
         assert len(item.tracking_events) == 2
+
+
+def test_import_letters_archive_accepts_single_item_directory(tmp_path: Path) -> None:
+    archive_root = tmp_path / "managed_archive"
+    item_dir = tmp_path / "Letters" / "Belarus" / "Postcards" / "BY-3165002"
+    item_dir.mkdir(parents=True)
+    (item_dir / "scan.heif").write_bytes(b"heif")
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        summary = import_letters_archive(session, item_dir, archive_root)
+
+        assert summary.scanned == 1
+        assert summary.imported == 1
+        item = session.scalar(select(Item))
+        assert item is not None
+        assert item.country == "Belarus"
+        assert item.category == "Postcards"
+        assert item.source_relpath == "Belarus/Postcards/BY-3165002"

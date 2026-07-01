@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.config import settings
 from app.db.database import get_session
 from app.models import Asset, Item, Tag, TrackingEvent
+from app.services.importers import ImportSummary, import_letter_sources
 from app.services.items import build_item_query
 
 ui_router = APIRouter(include_in_schema=False)
@@ -381,11 +382,31 @@ def render_page(title: str, body: str) -> str:
         border: 1px solid rgba(97, 141, 92, 0.25);
       }}
 
+      .flash.error {{
+        background: rgba(156, 79, 45, 0.10);
+        color: #8f4325;
+        border-color: rgba(156, 79, 45, 0.22);
+      }}
+
       .check-row {{
         display: flex;
         align-items: center;
         gap: 8px;
         color: var(--muted);
+      }}
+
+      .summary-grid {{
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 12px;
+        margin-bottom: 18px;
+      }}
+
+      .hint-list {{
+        margin: 0;
+        padding-left: 18px;
+        color: var(--muted);
+        line-height: 1.7;
       }}
 
       @media (max-width: 980px) {{
@@ -491,6 +512,41 @@ def get_form_value(form_data: dict[str, list[str]], key: str, default: str = "")
     if not values:
         return default
     return values[0]
+
+
+def parse_source_paths_input(raw_paths: str) -> list[Path]:
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for raw_line in raw_paths.splitlines():
+        candidate = raw_line.strip()
+        if not candidate:
+            continue
+        path = Path(candidate).expanduser()
+        if not path.exists():
+            raise HTTPException(status_code=400, detail=f"Source path not found: {candidate}")
+        if not path.is_dir():
+            raise HTTPException(status_code=400, detail=f"Source path is not a directory: {candidate}")
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        paths.append(resolved)
+    if not paths:
+        raise HTTPException(status_code=400, detail="Add at least one source folder.")
+    return paths
+
+
+def parse_limit_input(raw_limit: str) -> int | None:
+    cleaned = raw_limit.strip()
+    if not cleaned:
+        return None
+    try:
+        value = int(cleaned)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Limit must be a whole number.") from exc
+    if value <= 0:
+        raise HTTPException(status_code=400, detail="Limit must be greater than zero.")
+    return value
 
 
 def build_asset_public_path(asset_path: str, suffix: str) -> str:
@@ -691,6 +747,9 @@ def render_home(
               <a class="reset" href="/">Reset</a>
             </div>
           </form>
+          <div style="margin-top:12px;">
+            <a class="button-link" href="/import">Open Importer</a>
+          </div>
         </section>
 
         <div class="list-meta">
@@ -767,6 +826,92 @@ def render_admin(item: Item, saved: bool = False) -> str:
     return render_page("Philatelic Catalog Admin", body)
 
 
+def render_importer(
+    *,
+    source_paths: str,
+    limit: str,
+    summary: ImportSummary | None = None,
+    error: str | None = None,
+    executed_mode: str | None = None,
+) -> str:
+    message = ""
+    if error:
+        message = f'<div class="flash error">{escape(error)}</div>'
+    elif summary is not None:
+        headline = "Dry run complete." if summary.dry_run else "Import complete."
+        message = f'<div class="flash">{headline}</div>'
+
+    summary_markup = ""
+    if summary is not None:
+        summary_cards = [
+            ("Scanned", str(summary.scanned)),
+            ("Imported", str(summary.imported)),
+            ("Updated", str(summary.updated)),
+            ("Copied Assets", str(summary.copied_assets)),
+            ("Tracking Events", str(summary.tracking_events)),
+        ]
+        summary_markup = (
+            '<section class="section">'
+            '<h2>Latest Run</h2>'
+            '<div class="summary-grid">'
+            + "".join(
+                f'<article class="meta-card"><div class="meta-label">{escape(label)}</div>'
+                f'<div class="meta-value">{escape(value)}</div></article>'
+                for label, value in summary_cards
+            )
+            + "</div>"
+            + f'<div class="meta-card"><div class="meta-value">Mode: {escape(executed_mode or ("preview" if summary.dry_run else "import"))}</div></div>'
+            + "</section>"
+        )
+
+    body = f"""
+    <main class="main" style="max-width: 1200px; margin: 0 auto;">
+      <div class="eyebrow">Philatelic Catalog</div>
+      <h1>Batch Importer</h1>
+      <p class="subtitle">Paste one or more folders, preview the scan, then import them into the managed archive.</p>
+      {message}
+      {summary_markup}
+      <div class="admin-grid">
+        <section class="panel admin-form">
+          <h2>Import Queue</h2>
+          <form method="post" action="/import">
+            <label>Source Folders
+              <textarea name="source_paths" placeholder="/Volumes/Frank Ruan Database/MediaLibrary/Letters">{escape(source_paths)}</textarea>
+            </label>
+            <label>Limit
+              <input type="text" name="limit" value="{escape(limit)}" placeholder="Optional item cap for this run" />
+            </label>
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+              <button type="submit" name="mode" value="preview">Preview Import</button>
+              <button type="submit" name="mode" value="import">Run Import</button>
+              <a class="button-link" href="/">Back to Browser</a>
+            </div>
+          </form>
+        </section>
+
+        <section class="panel admin-form">
+          <h2>How It Works</h2>
+          <ul class="hint-list">
+            <li>One folder per line. You can paste the whole `Letters` root, a country folder, a category folder, or a single item folder.</li>
+            <li>`Preview Import` parses everything without changing SQLite or copying files.</li>
+            <li>`Run Import` copies assets into `managed_archive` and merges metadata into the catalog.</li>
+            <li>Duplicate folders in the queue are ignored automatically for the same run.</li>
+          </ul>
+
+          <section class="section">
+            <h2>Suggested Starting Point</h2>
+            <div class="meta-card">
+              <div class="meta-label">Archive Root</div>
+              <div class="meta-value">/Volumes/Frank Ruan Database/MediaLibrary/Letters</div>
+            </div>
+          </section>
+        </section>
+      </div>
+    </main>
+    """
+    return render_page("Philatelic Catalog Importer", body)
+
+
 @ui_router.get("/", response_class=HTMLResponse)
 def home(
     item: int | None = None,
@@ -809,6 +954,75 @@ def admin_item(item_id: int, saved: int = 0, session: Session = Depends(get_sess
     if item is None:
         raise HTTPException(status_code=404, detail="Item not found")
     return HTMLResponse(render_admin(item, saved=bool(saved)))
+
+
+@ui_router.get("/import", response_class=HTMLResponse)
+def importer_page() -> HTMLResponse:
+    return HTMLResponse(
+        render_importer(
+            source_paths="/Volumes/Frank Ruan Database/MediaLibrary/Letters",
+            limit="",
+            summary=None,
+            error=None,
+            executed_mode=None,
+        )
+    )
+
+
+@ui_router.post("/import", response_class=HTMLResponse)
+async def importer_run(
+    request: Request,
+    session: Session = Depends(get_session),
+) -> HTMLResponse:
+    body = (await request.body()).decode("utf-8")
+    form_data = parse_qs(body, keep_blank_values=True)
+    source_paths_raw = get_form_value(form_data, "source_paths")
+    limit_raw = get_form_value(form_data, "limit")
+    mode = get_form_value(form_data, "mode", "preview")
+
+    try:
+        source_paths = parse_source_paths_input(source_paths_raw)
+        limit = parse_limit_input(limit_raw)
+        summary = import_letter_sources(
+            session,
+            source_paths,
+            settings.managed_archive_root,
+            dry_run=(mode != "import"),
+            limit=limit,
+        )
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, str) else "Importer could not run."
+        return HTMLResponse(
+            render_importer(
+                source_paths=source_paths_raw,
+                limit=limit_raw,
+                summary=None,
+                error=detail,
+                executed_mode=mode,
+            ),
+            status_code=exc.status_code,
+        )
+    except Exception as exc:
+        return HTMLResponse(
+            render_importer(
+                source_paths=source_paths_raw,
+                limit=limit_raw,
+                summary=None,
+                error=str(exc),
+                executed_mode=mode,
+            ),
+            status_code=500,
+        )
+
+    return HTMLResponse(
+        render_importer(
+            source_paths=source_paths_raw,
+            limit=limit_raw,
+            summary=summary,
+            error=None,
+            executed_mode=mode,
+        )
+    )
 
 
 @ui_router.post("/admin/items/{item_id}")

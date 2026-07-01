@@ -5,6 +5,7 @@ from datetime import date, datetime
 import re
 import shutil
 from pathlib import Path
+from collections.abc import Iterable
 import uuid
 from typing import Any
 
@@ -92,6 +93,29 @@ def discover_item_directories(source_root: Path) -> list[Path]:
         if visible_files(path):
             directories.append(path)
     return directories
+
+
+def discover_item_directories_for_source(source_path: Path) -> list[Path]:
+    if not source_path.exists():
+        raise ValueError(f"Source path does not exist: {source_path}")
+    if not source_path.is_dir():
+        raise ValueError(f"Source path is not a directory: {source_path}")
+    if visible_files(source_path):
+        return [source_path]
+    return discover_item_directories(source_path)
+
+
+def discover_item_directories_for_sources(source_paths: Iterable[Path]) -> list[Path]:
+    discovered: list[Path] = []
+    seen: set[Path] = set()
+    for source_path in source_paths:
+        for item_dir in discover_item_directories_for_source(source_path):
+            resolved = item_dir.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            discovered.append(resolved)
+    return sorted(discovered)
 
 
 def normalize_name(raw_name: str) -> str:
@@ -322,15 +346,22 @@ def parse_tracking_event_line(line: str) -> ParsedTrackingEvent | None:
     )
 
 
-def build_parsed_item(item_dir: Path, source_root: Path, archive_root: Path) -> ParsedItem:
-    relative = item_dir.relative_to(source_root)
-    if len(relative.parts) < 3:
+def derive_item_taxonomy(item_dir: Path) -> tuple[str, str, str, str]:
+    if len(item_dir.parts) < 3:
         raise ValueError(f"Unsupported item directory layout: {item_dir}")
+    country = item_dir.parents[1].name
+    category = item_dir.parent.name
+    title = normalize_name(item_dir.name)
+    source_relpath = Path(country, category, item_dir.name).as_posix()
+    return country, category, title, source_relpath
 
-    country = relative.parts[0]
-    category = relative.parts[1]
-    title = normalize_name(relative.name)
-    source_relpath = relative.as_posix()
+
+def build_parsed_item(
+    item_dir: Path,
+    source_root: Path | None = None,
+    archive_root: Path | None = None,
+) -> ParsedItem:
+    country, category, title, source_relpath = derive_item_taxonomy(item_dir)
     origin = extract_origin(title)
     tags = extract_tags(title)
     tracking_number = derive_tracking_number(title)
@@ -484,13 +515,30 @@ def import_letters_archive(
     dry_run: bool = False,
     limit: int | None = None,
 ) -> ImportSummary:
+    return import_letter_sources(
+        session,
+        [source_root],
+        archive_root,
+        dry_run=dry_run,
+        limit=limit,
+    )
+
+
+def import_letter_sources(
+    session: Session,
+    source_paths: Iterable[Path],
+    archive_root: Path,
+    *,
+    dry_run: bool = False,
+    limit: int | None = None,
+) -> ImportSummary:
     summary = ImportSummary(dry_run=dry_run)
-    item_directories = discover_item_directories(source_root)
+    item_directories = discover_item_directories_for_sources(source_paths)
     if limit is not None:
         item_directories = item_directories[:limit]
 
     for item_dir in item_directories:
-        parsed = build_parsed_item(item_dir, source_root, archive_root)
+        parsed = build_parsed_item(item_dir)
         summary.scanned += 1
         _, created, copied_assets, added_events = upsert_item_from_parsed(
             session, parsed, archive_root=archive_root, dry_run=dry_run
