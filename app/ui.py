@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+from email.parser import BytesParser
+from email.policy import default as email_policy
 from html import escape
 from pathlib import Path
 import re
@@ -712,6 +714,62 @@ def parse_limit_input(raw_limit: str) -> int | None:
     return value
 
 
+def sanitize_uploaded_relpath(filename: str) -> Path:
+    cleaned = filename.replace("\\", "/").strip("/")
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="Uploaded file is missing a path.")
+    relative = Path(cleaned)
+    if any(part in {"", ".", ".."} for part in relative.parts):
+        raise HTTPException(status_code=400, detail=f"Unsafe upload path: {filename}")
+    return relative
+
+
+async def extract_uploaded_tree(request: Request) -> tuple[Path, int, str, str]:
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" not in content_type:
+        raise HTTPException(status_code=400, detail="Uploader expects multipart form data.")
+
+    body = await request.body()
+    message = BytesParser(policy=email_policy).parsebytes(
+        f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode("utf-8") + body
+    )
+
+    mode = "preview"
+    limit_raw = ""
+    upload_id = uuid.uuid4().hex
+    staging_root = settings.upload_staging_root / upload_id
+    staging_root.mkdir(parents=True, exist_ok=True)
+    file_count = 0
+
+    for part in message.iter_parts():
+        disposition = part.get_content_disposition()
+        if disposition != "form-data":
+            continue
+        field_name = part.get_param("name", header="content-disposition")
+        filename = part.get_filename()
+        payload = part.get_payload(decode=True) or b""
+
+        if filename:
+            relative = sanitize_uploaded_relpath(filename)
+            destination = (staging_root / relative).resolve()
+            destination.relative_to(staging_root.resolve())
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(payload)
+            file_count += 1
+            continue
+
+        value = payload.decode("utf-8", errors="replace")
+        if field_name == "mode":
+            mode = value.strip() or "preview"
+        elif field_name == "limit":
+            limit_raw = value.strip()
+
+    if file_count == 0:
+        raise HTTPException(status_code=400, detail="Choose a folder before uploading.")
+
+    return staging_root, file_count, mode, limit_raw
+
+
 def snapshot_job(job_id: str) -> dict[str, object] | None:
     with IMPORT_JOBS_LOCK:
         job = IMPORT_JOBS.get(job_id)
@@ -1302,12 +1360,28 @@ def render_importer(
         </section>
 
         <section class="panel admin-form">
+          <h2>Upload Folder</h2>
+          <form id="upload-form" method="post" action="/import/upload" enctype="multipart/form-data">
+            <label>Choose Folder
+              <input id="upload-files" type="file" name="files" webkitdirectory directory multiple />
+            </label>
+            <label>Limit
+              <input id="upload-limit" type="text" name="limit" value="{escape(limit)}" placeholder="Optional item cap for this upload" />
+            </label>
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+              <button type="button" onclick="submitUploadForm('preview')">Preview Upload</button>
+              <button type="button" onclick="submitUploadForm('import')">Upload and Import</button>
+            </div>
+          </form>
+
+          <section class="section">
           <h2>How It Works</h2>
           <ul class="hint-list">
             <li>One folder per line. You can paste the whole `Letters` root, a country folder, a category folder, or a single item folder.</li>
             <li>`Preview Import` parses everything without changing SQLite or copying files.</li>
             <li>`Run Import` copies assets into `managed_archive` and merges metadata into the catalog.</li>
             <li>Duplicate folders in the queue are ignored automatically for the same run.</li>
+            <li>`Upload Folder` lets you send a local folder straight from the browser and reuses the same preview/import pipeline.</li>
           </ul>
 
           <section class="section">
@@ -1317,9 +1391,34 @@ def render_importer(
               <div class="meta-value">/Volumes/Frank Ruan Database/MediaLibrary/Letters</div>
             </div>
           </section>
+          </section>
         </section>
       </div>
       {script_markup}
+      <script>
+      async function submitUploadForm(mode) {{
+        const input = document.getElementById("upload-files");
+        const limit = document.getElementById("upload-limit").value;
+        if (!input.files || input.files.length === 0) {{
+          window.alert("Choose a folder before uploading.");
+          return;
+        }}
+        const formData = new FormData();
+        formData.append("mode", mode);
+        formData.append("limit", limit);
+        for (const file of input.files) {{
+          formData.append("files", file, file.webkitRelativePath || file.name);
+        }}
+        const response = await fetch("/import/upload", {{
+          method: "POST",
+          body: formData,
+        }});
+        const html = await response.text();
+        document.open();
+        document.write(html);
+        document.close();
+      }}
+      </script>
     </main>
     """
     return render_page("Philatelic Catalog Importer", body)
@@ -1437,6 +1536,65 @@ def importer_job_status(job_id: str) -> JSONResponse:
     if job is None:
         raise HTTPException(status_code=404, detail="Import job not found")
     return JSONResponse(job)
+
+
+@ui_router.post("/import/upload", response_class=HTMLResponse)
+async def importer_upload(request: Request, session: Session = Depends(get_session)) -> Response:
+    try:
+        upload_root, file_count, mode, limit_raw = await extract_uploaded_tree(request)
+        limit = parse_limit_input(limit_raw)
+        source_label = f"[Uploaded {file_count} files]"
+        if mode == "import":
+            job_id = start_import_job([upload_root], limit)
+            return RedirectResponse(url=f"/import?job_id={job_id}", status_code=303)
+
+        summary, previews = describe_import_letter_sources(
+            session,
+            [upload_root],
+            settings.managed_archive_root,
+            limit=limit,
+        )
+        return HTMLResponse(
+            render_importer(
+                source_paths=source_label,
+                limit=limit_raw,
+                summary=summary,
+                previews=previews,
+                error=None,
+                executed_mode="upload-preview",
+                job_id=None,
+                job=None,
+            )
+        )
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, str) else "Upload could not run."
+        return HTMLResponse(
+            render_importer(
+                source_paths="",
+                limit="",
+                summary=None,
+                previews=None,
+                error=detail,
+                executed_mode="upload",
+                job_id=None,
+                job=None,
+            ),
+            status_code=exc.status_code,
+        )
+    except Exception as exc:
+        return HTMLResponse(
+            render_importer(
+                source_paths="",
+                limit="",
+                summary=None,
+                previews=None,
+                error=str(exc),
+                executed_mode="upload",
+                job_id=None,
+                job=None,
+            ),
+            status_code=500,
+        )
 
 
 @ui_router.post("/import", response_class=HTMLResponse)

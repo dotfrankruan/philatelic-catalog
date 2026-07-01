@@ -31,6 +31,7 @@ def test_importer_page_renders() -> None:
         assert response.status_code == 200
         assert "Batch Importer" in response.text
         assert "Preview Import" in response.text
+        assert "Upload Folder" in response.text
 
 
 def test_importer_preview_uses_service(monkeypatch, tmp_path) -> None:
@@ -156,6 +157,70 @@ def test_importer_job_status_returns_json(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert response.json()["state"] == "completed"
+
+
+def test_importer_upload_preview_uses_uploaded_tree(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_describe_import_letter_sources(session, source_paths, archive_root, *, limit=None):
+        captured["source_paths"] = list(source_paths)
+        captured["limit"] = limit
+        return (
+            ImportSummary(scanned=1, imported=1, updated=0, copied_assets=2, tracking_events=3, dry_run=True),
+            [
+                type(
+                    "PreviewRow",
+                    (),
+                    {
+                        "country": "Hong Kong",
+                        "category": "Postcards",
+                        "title": "AUG192024",
+                        "tracking_number": "AUG192024",
+                        "source_relpath": "Hong Kong/Postcards/AUG192024",
+                        "location": None,
+                        "asset_count": 2,
+                        "tracking_event_count": 3,
+                        "action": "import",
+                    },
+                )()
+            ],
+        )
+
+    monkeypatch.setattr(ui_module, "describe_import_letter_sources", fake_describe_import_letter_sources)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/import/upload",
+            files=[
+                ("files", ("Hong Kong/Postcards/AUG192024/front.png", b"front", "image/png")),
+                ("files", ("Hong Kong/Postcards/AUG192024/back.png", b"back", "image/png")),
+                ("mode", (None, "preview")),
+                ("limit", (None, "4")),
+            ],
+        )
+
+    assert response.status_code == 200
+    assert "Dry run complete." in response.text
+    assert "AUG192024" in response.text
+    assert captured["limit"] == 4
+
+
+def test_importer_upload_import_redirects_to_job(monkeypatch) -> None:
+    monkeypatch.setattr(ui_module, "start_import_job", lambda source_paths, limit: "upload-job-123")
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/import/upload",
+            files=[
+                ("files", ("Hong Kong/Postcards/AUG192024/front.png", b"front", "image/png")),
+                ("mode", (None, "import")),
+                ("limit", (None, "")),
+            ],
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/import?job_id=upload-job-123"
 
 
 def test_display_title_removes_embedded_bracket_tags() -> None:
