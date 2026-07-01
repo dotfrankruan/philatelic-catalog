@@ -244,3 +244,29 @@ def test_import_replaces_non_manual_tracking_events_but_keeps_manual_ones(tmp_pa
         assert len(manifest_events) == 2
         assert len(manual_events) == 1
         assert manifest_events[0].location == "上海市 20006208"
+
+
+def test_import_updates_existing_assets_without_deleted_instance_errors(tmp_path: Path) -> None:
+    source_root = tmp_path / "Letters"
+    archive_root = tmp_path / "managed_archive"
+    item_dir = source_root / "Hong Kong" / "Postcards" / "AUG192024 - Andy W"
+    item_dir.mkdir(parents=True)
+    (item_dir / "front.png").write_bytes(b"front-one")
+    (item_dir / "back.png").write_bytes(b"back-one")
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        first_summary = import_letters_archive(session, source_root, archive_root)
+        assert first_summary.imported == 1
+
+        (item_dir / "back.png").write_bytes(b"back-two")
+        (item_dir / "scan.heif").write_bytes(b"scan-two")
+
+        second_summary = import_letters_archive(session, source_root, archive_root)
+        assert second_summary.updated == 1
+
+        item = session.scalar(select(Item))
+        assert item is not None
+        assert len(item.assets) == 3

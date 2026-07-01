@@ -584,12 +584,14 @@ def upsert_item_from_parsed(
     session.add(item)
     session.flush()
 
-    for asset in list(item.assets):
-        session.delete(asset)
+    # Replace managed assets through the relationship so deleted rows are
+    # removed cleanly before later autoflush-triggering queries.
+    item.assets.clear()
+    session.flush()
 
     copied_assets = copy_assets(parsed.asset_files, archive_root, item.archive_id, dry_run=False)
     for kind, copied_path in copied_assets:
-        session.add(Asset(item_id=item.id, kind=kind, path=copied_path.as_posix()))
+        item.assets.append(Asset(kind=kind, path=copied_path.as_posix()))
 
     item.tags.clear()
     for tag_name in parsed.tags:
