@@ -140,6 +140,7 @@ def test_importer_page_completed_job_does_not_poll_again(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert "Import complete." in response.text
+    assert "Run Status" in response.text
     assert "fetch(`/import/jobs/" not in response.text
 
 

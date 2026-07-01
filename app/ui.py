@@ -1218,9 +1218,10 @@ def render_importer(
         progress_text = current_item or (
             "Import complete." if state == "completed" else "Import failed." if state == "failed" else "Waiting to start..."
         )
+        progress_heading = "Live Progress" if state not in {"completed", "failed"} else "Run Status"
         progress_markup = f"""
         <section class="section progress-shell">
-          <h2>Live Progress</h2>
+          <h2>{progress_heading}</h2>
           <div class="meta-card">
             <div class="meta-label">State</div>
             <div class="meta-value" id="import-state">{escape(state.title())}</div>
