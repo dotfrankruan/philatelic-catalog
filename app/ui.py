@@ -46,15 +46,22 @@ def render_page(title: str, body: str) -> str:
     <title>{escape(title)}</title>
     <style>
       :root {{
-        --paper: #f6f1e7;
-        --paper-strong: #ece4d4;
-        --ink: #201b16;
-        --muted: #736455;
-        --line: #d5c8b4;
-        --accent: #9c4f2d;
-        --accent-soft: #e5b98e;
-        --card: rgba(255,255,255,0.55);
-        --shadow: 0 18px 45px rgba(55, 39, 24, 0.10);
+        --paper: #f4efe4;
+        --paper-strong: #e8dcc7;
+        --paper-deep: #ddc6a6;
+        --ink: #1d1712;
+        --muted: #6e6255;
+        --line: rgba(122, 94, 62, 0.18);
+        --accent: #a4532f;
+        --accent-strong: #7f3e22;
+        --accent-soft: #d7a97c;
+        --accent-wash: rgba(164, 83, 47, 0.08);
+        --sage: #71816a;
+        --danger: #be7a72;
+        --card: rgba(255,255,255,0.64);
+        --card-solid: rgba(255, 250, 242, 0.96);
+        --shadow: 0 24px 64px rgba(47, 33, 20, 0.11);
+        --shadow-soft: 0 12px 30px rgba(47, 33, 20, 0.08);
       }}
 
       * {{ box-sizing: border-box; }}
@@ -63,9 +70,9 @@ def render_page(title: str, body: str) -> str:
         margin: 0;
         color: var(--ink);
         background:
-          radial-gradient(circle at top left, rgba(156, 79, 45, 0.12), transparent 28%),
-          radial-gradient(circle at bottom right, rgba(114, 96, 67, 0.12), transparent 32%),
-          linear-gradient(180deg, #f8f5ee 0%, #efe7d9 100%);
+          radial-gradient(circle at top left, rgba(164, 83, 47, 0.18), transparent 26%),
+          radial-gradient(circle at top right, rgba(221, 198, 166, 0.3), transparent 24%),
+          linear-gradient(180deg, #f7f3eb 0%, #efe6d8 52%, #eadfcf 100%);
         font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
       }}
 
@@ -74,76 +81,157 @@ def render_page(title: str, body: str) -> str:
       .shell {{
         min-height: 100vh;
         display: grid;
-        grid-template-columns: 360px 1fr;
+        grid-template-columns: 340px minmax(0, 1fr);
+        gap: 22px;
+        padding: 22px;
       }}
 
       .sidebar {{
-        border-right: 1px solid var(--line);
-        background: rgba(250, 246, 239, 0.92);
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        background:
+          linear-gradient(180deg, rgba(255, 251, 245, 0.96), rgba(247, 239, 228, 0.94));
         backdrop-filter: blur(12px);
-        padding: 28px 24px;
+        box-shadow: var(--shadow);
+        padding: 26px 22px;
         position: sticky;
-        top: 0;
-        height: 100vh;
+        top: 22px;
+        height: calc(100vh - 44px);
         overflow: auto;
       }}
 
       .main {{
-        padding: 28px;
+        padding: 8px 4px 28px;
+        min-width: 0;
       }}
 
       .eyebrow {{
-        letter-spacing: 0.16em;
+        letter-spacing: 0.18em;
         text-transform: uppercase;
         color: var(--accent);
-        font-size: 12px;
-        margin-bottom: 10px;
+        font-size: 11px;
+        margin-bottom: 12px;
+        font-weight: 700;
       }}
 
       h1 {{
-        margin: 0 0 8px;
-        font-size: 34px;
-        line-height: 1;
+        margin: 0 0 10px;
+        font-size: clamp(2.4rem, 5vw, 4.3rem);
+        line-height: 0.96;
+        letter-spacing: -0.03em;
+        max-width: 12ch;
+      }}
+
+      h2 {{
+        margin: 0;
+        font-size: clamp(1.45rem, 2.3vw, 2rem);
+        line-height: 1.08;
+        letter-spacing: -0.02em;
       }}
 
       .subtitle {{
-        margin: 0 0 24px;
+        margin: 0;
         color: var(--muted);
-        line-height: 1.5;
+        line-height: 1.65;
+        font-size: 1.04rem;
       }}
 
       .panel {{
         background: var(--card);
         border: 1px solid rgba(213, 200, 180, 0.9);
-        border-radius: 22px;
+        border-radius: 28px;
         box-shadow: var(--shadow);
+      }}
+
+      .masthead {{
+        padding: 26px 28px 30px;
+        background:
+          linear-gradient(135deg, rgba(255, 251, 245, 0.94), rgba(246, 235, 219, 0.9)),
+          radial-gradient(circle at top right, rgba(164, 83, 47, 0.08), transparent 32%);
+        position: relative;
+        overflow: hidden;
+      }}
+
+      .masthead::after {{
+        content: "";
+        position: absolute;
+        inset: auto -40px -60px auto;
+        width: 220px;
+        height: 220px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(164, 83, 47, 0.12), transparent 65%);
+        pointer-events: none;
+      }}
+
+      .masthead-grid {{
+        display: grid;
+        grid-template-columns: minmax(0, 1.6fr) minmax(260px, 0.95fr);
+        gap: 18px;
+        align-items: end;
+      }}
+
+      .hero-note {{
+        position: relative;
+        z-index: 1;
+      }}
+
+      .hero-stats {{
+        display: grid;
+        gap: 12px;
+        position: relative;
+        z-index: 1;
+      }}
+
+      .hero-stat {{
+        padding: 16px 18px;
+        border-radius: 20px;
+        border: 1px solid rgba(164, 83, 47, 0.14);
+        background: rgba(255,255,255,0.66);
+        box-shadow: var(--shadow-soft);
+      }}
+
+      .hero-stat-value {{
+        font-size: 1.75rem;
+        line-height: 1;
+        margin-bottom: 4px;
+      }}
+
+      .hero-stat-label {{
+        color: var(--muted);
+        font-size: 0.95rem;
+      }}
+
+      .sidebar-block {{
+        margin-top: 18px;
       }}
 
       .filters {{
         padding: 18px;
-        margin-bottom: 18px;
       }}
 
       .filters form {{
         display: grid;
-        gap: 12px;
+        gap: 14px;
       }}
 
       .filters label {{
         display: grid;
         gap: 6px;
-        font-size: 13px;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
         color: var(--muted);
       }}
 
       input, select {{
         width: 100%;
         border: 1px solid var(--line);
-        border-radius: 12px;
-        background: rgba(255,255,255,0.85);
-        padding: 10px 12px;
+        border-radius: 15px;
+        background: rgba(255,255,255,0.88);
+        padding: 12px 14px;
         font: inherit;
         color: var(--ink);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.45);
       }}
 
       input[type="checkbox"] {{
@@ -154,16 +242,18 @@ def render_page(title: str, body: str) -> str:
       button {{
         border: 0;
         border-radius: 999px;
-        padding: 11px 16px;
-        background: var(--accent);
+        padding: 12px 18px;
+        background: linear-gradient(135deg, var(--accent), var(--accent-strong));
         color: white;
         font: inherit;
+        font-weight: 700;
         cursor: pointer;
+        box-shadow: 0 10px 24px rgba(164, 83, 47, 0.24);
       }}
 
       .reset {{
         display: inline-block;
-        margin-left: 10px;
+        margin-left: 12px;
         color: var(--muted);
         font-size: 14px;
       }}
@@ -172,7 +262,7 @@ def render_page(title: str, body: str) -> str:
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin: 10px 2px 12px;
+        margin: 16px 4px 12px;
         color: var(--muted);
         font-size: 14px;
       }}
@@ -193,17 +283,28 @@ def render_page(title: str, body: str) -> str:
       .browse-card,
       .nav-link {{
         display: block;
-        padding: 14px 16px;
-        border-radius: 18px;
-        border: 1px solid rgba(213, 200, 180, 0.7);
-        background: rgba(255,255,255,0.58);
+        padding: 16px 17px;
+        border-radius: 20px;
+        border: 1px solid rgba(213, 200, 180, 0.6);
+        background: rgba(255,255,255,0.62);
+        transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+      }}
+
+      .browse-card:hover,
+      .nav-link:hover,
+      .item-link:hover,
+      .button-link:hover {{
+        transform: translateY(-1px);
+        box-shadow: var(--shadow-soft);
       }}
 
       .nav-link.active,
       .browse-card.active {{
-        border-color: var(--accent-soft);
-        box-shadow: inset 0 0 0 1px rgba(156, 79, 45, 0.12);
-        background: linear-gradient(180deg, rgba(255,255,255,0.85), rgba(239,231,217,0.95));
+        border-color: rgba(164, 83, 47, 0.28);
+        box-shadow:
+          inset 0 0 0 1px rgba(164, 83, 47, 0.14),
+          0 12px 28px rgba(73, 47, 27, 0.08);
+        background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(241,232,220,0.96));
       }}
 
       .item-link {{
@@ -223,14 +324,16 @@ def render_page(title: str, body: str) -> str:
       .item-country {{
         color: var(--accent);
         font-size: 12px;
-        letter-spacing: 0.12em;
+        letter-spacing: 0.16em;
         text-transform: uppercase;
-        margin-bottom: 6px;
+        margin-bottom: 8px;
+        font-weight: 700;
       }}
 
       .item-title {{
-        font-size: 18px;
-        margin-bottom: 6px;
+        font-size: 1.55rem;
+        line-height: 1.22;
+        margin-bottom: 8px;
       }}
 
       .item-sub {{
@@ -239,46 +342,48 @@ def render_page(title: str, body: str) -> str:
       }}
 
       .browse-grid {{
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
       }}
 
       .count-pill {{
         display: inline-block;
-        margin-top: 8px;
-        padding: 5px 10px;
+        margin-top: 10px;
+        padding: 6px 10px;
         border-radius: 999px;
-        background: rgba(156, 79, 45, 0.08);
-        color: var(--accent);
+        background: rgba(194, 127, 120, 0.12);
+        color: #bf7c76;
         font-size: 12px;
       }}
 
       .pager {{
         grid-auto-flow: column;
         justify-content: start;
-        margin-top: 18px;
+        margin-top: 20px;
+        align-items: center;
       }}
 
       .item-title.returned,
       .detail-title.returned {{
-        color: #c27f78;
+        color: var(--danger);
       }}
 
       .detail {{
-        padding: 26px;
+        padding: 28px;
       }}
 
       .detail-head {{
         display: flex;
         justify-content: space-between;
-        gap: 16px;
+        gap: 20px;
         align-items: start;
-        margin-bottom: 22px;
+        margin-bottom: 26px;
       }}
 
       .detail-title {{
-        font-size: 40px;
-        line-height: 1.05;
+        font-size: clamp(2.2rem, 3.5vw, 3.4rem);
+        line-height: 1;
         margin: 0 0 8px;
+        max-width: 12ch;
       }}
 
       .pill-row {{
@@ -288,18 +393,18 @@ def render_page(title: str, body: str) -> str:
       }}
 
       .pill {{
-        padding: 7px 11px;
+        padding: 8px 12px;
         border-radius: 999px;
-        background: rgba(156, 79, 45, 0.08);
+        background: rgba(164, 83, 47, 0.08);
         color: var(--accent);
         font-size: 13px;
       }}
 
       .inline-meta {{
-        margin-top: 10px;
-        padding: 10px 12px;
-        border-radius: 14px;
-        background: rgba(255,255,255,0.62);
+        margin: 10px 0 10px;
+        padding: 12px 13px;
+        border-radius: 16px;
+        background: rgba(255,255,255,0.76);
         border: 1px solid rgba(213, 200, 180, 0.7);
       }}
 
@@ -316,29 +421,30 @@ def render_page(title: str, body: str) -> str:
         display: inline-block;
         border-radius: 999px;
         padding: 11px 16px;
-        background: rgba(156, 79, 45, 0.10);
+        background: rgba(164, 83, 47, 0.10);
         color: var(--accent);
         font-size: 14px;
+        border: 1px solid rgba(164, 83, 47, 0.1);
       }}
 
       .meta-grid {{
         display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 14px;
-        margin-bottom: 24px;
+        margin-bottom: 26px;
       }}
 
       .meta-card {{
         padding: 16px;
-        border-radius: 18px;
-        background: rgba(255,255,255,0.6);
+        border-radius: 20px;
+        background: rgba(255,255,255,0.72);
         border: 1px solid rgba(213, 200, 180, 0.7);
       }}
 
       .meta-label {{
         color: var(--muted);
         font-size: 12px;
-        letter-spacing: 0.1em;
+        letter-spacing: 0.14em;
         text-transform: uppercase;
         margin-bottom: 8px;
       }}
@@ -350,43 +456,43 @@ def render_page(title: str, body: str) -> str:
       }}
 
       .section {{
-        margin-top: 24px;
+        margin-top: 28px;
       }}
 
       .section h2 {{
-        margin: 0 0 12px;
-        font-size: 20px;
+        margin: 0 0 14px;
+        font-size: 1.65rem;
       }}
 
       .asset-grid {{
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-        gap: 14px;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 16px;
       }}
 
       .asset-card {{
         padding: 14px;
-        border-radius: 20px;
-        background: rgba(255,255,255,0.62);
+        border-radius: 22px;
+        background: rgba(255,255,255,0.7);
         border: 1px solid rgba(213, 200, 180, 0.7);
       }}
 
       .asset-card img {{
         width: 100%;
-        height: 240px;
+        height: 260px;
         object-fit: cover;
-        border-radius: 14px;
+        border-radius: 16px;
         display: block;
-        margin-bottom: 10px;
+        margin-bottom: 12px;
         background: var(--paper-strong);
       }}
 
       .asset-kind {{
         color: var(--accent);
         font-size: 12px;
-        letter-spacing: 0.1em;
+        letter-spacing: 0.14em;
         text-transform: uppercase;
-        margin-bottom: 5px;
+        margin-bottom: 6px;
       }}
 
       .asset-path {{
@@ -397,24 +503,25 @@ def render_page(title: str, body: str) -> str:
 
       .timeline {{
         display: grid;
-        gap: 12px;
+        gap: 14px;
       }}
 
       .event {{
-        padding: 14px 16px;
+        padding: 16px 18px;
         border-left: 4px solid var(--accent-soft);
-        border-radius: 0 18px 18px 0;
-        background: rgba(255,255,255,0.6);
+        border-radius: 0 20px 20px 0;
+        background: rgba(255,255,255,0.72);
+        box-shadow: var(--shadow-soft);
       }}
 
       .event-time {{
         color: var(--muted);
         font-size: 13px;
-        margin-bottom: 5px;
+        margin-bottom: 6px;
       }}
 
       .empty {{
-        padding: 34px;
+        padding: 40px 32px;
         text-align: center;
         color: var(--muted);
       }}
@@ -423,9 +530,9 @@ def render_page(title: str, body: str) -> str:
         width: 100%;
         min-height: 120px;
         border: 1px solid var(--line);
-        border-radius: 12px;
-        background: rgba(255,255,255,0.85);
-        padding: 10px 12px;
+        border-radius: 16px;
+        background: rgba(255,255,255,0.88);
+        padding: 12px 14px;
         font: inherit;
         color: var(--ink);
         resize: vertical;
@@ -433,32 +540,32 @@ def render_page(title: str, body: str) -> str:
 
       .admin-grid {{
         display: grid;
-        grid-template-columns: 1.1fr 0.9fr;
-        gap: 20px;
+        grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+        gap: 22px;
       }}
 
       .admin-form {{
-        padding: 18px;
+        padding: 22px;
       }}
 
       .admin-form form {{
         display: grid;
-        gap: 12px;
+        gap: 14px;
       }}
 
       .flash {{
-        margin-bottom: 16px;
-        padding: 12px 14px;
-        border-radius: 14px;
-        background: rgba(97, 141, 92, 0.12);
-        color: #4f6d48;
-        border: 1px solid rgba(97, 141, 92, 0.25);
+        margin-bottom: 18px;
+        padding: 14px 16px;
+        border-radius: 18px;
+        background: rgba(113, 129, 106, 0.12);
+        color: #50604a;
+        border: 1px solid rgba(113, 129, 106, 0.25);
       }}
 
       .flash.error {{
-        background: rgba(156, 79, 45, 0.10);
-        color: #8f4325;
-        border-color: rgba(156, 79, 45, 0.22);
+        background: rgba(164, 83, 47, 0.10);
+        color: var(--accent-strong);
+        border-color: rgba(164, 83, 47, 0.22);
       }}
 
       .check-row {{
@@ -470,8 +577,8 @@ def render_page(title: str, body: str) -> str:
 
       .summary-grid {{
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-        gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 14px;
         margin-bottom: 18px;
       }}
 
@@ -502,13 +609,82 @@ def render_page(title: str, body: str) -> str:
 
       .preview-card {{
         padding: 14px 16px;
-        border-radius: 18px;
+        border-radius: 20px;
         border: 1px solid rgba(213, 200, 180, 0.7);
-        background: rgba(255,255,255,0.58);
+        background: rgba(255,255,255,0.68);
       }}
 
       .uploader-status {{
         margin-top: 14px;
+      }}
+
+      .toolbar {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+      }}
+
+      .stack {{
+        display: grid;
+        gap: 18px;
+      }}
+
+      .section-frame {{
+        padding: 24px 26px;
+      }}
+
+      .section-copy {{
+        margin-bottom: 18px;
+      }}
+
+      .section-copy .subtitle {{
+        margin-top: 6px;
+        max-width: 72ch;
+      }}
+
+      .sidebar-heading {{
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+      }}
+
+      .micro-stat-grid {{
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 14px;
+      }}
+
+      .micro-stat {{
+        padding: 12px 13px;
+        border-radius: 18px;
+        background: rgba(255,255,255,0.7);
+        border: 1px solid rgba(213, 200, 180, 0.62);
+      }}
+
+      .micro-stat strong {{
+        display: block;
+        font-size: 1.2rem;
+        margin-bottom: 3px;
+      }}
+
+      .sidebar-divider {{
+        height: 1px;
+        border: 0;
+        background: linear-gradient(90deg, rgba(164, 83, 47, 0.2), transparent);
+        margin: 18px 0;
+      }}
+
+      .detail-columns {{
+        display: grid;
+        grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.75fr);
+        gap: 22px;
+      }}
+
+      .note-card {{
+        white-space: normal;
       }}
 
       .hint-list {{
@@ -518,16 +694,27 @@ def render_page(title: str, body: str) -> str:
         line-height: 1.7;
       }}
 
+      @media (max-width: 1180px) {{
+        .masthead-grid,
+        .detail-columns {{
+          grid-template-columns: 1fr;
+        }}
+
+        .meta-grid {{
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }}
+      }}
+
       @media (max-width: 980px) {{
         .shell {{
           grid-template-columns: 1fr;
+          padding: 14px;
         }}
 
         .sidebar {{
           position: static;
+          top: 0;
           height: auto;
-          border-right: 0;
-          border-bottom: 1px solid var(--line);
         }}
 
         .meta-grid {{
@@ -536,6 +723,14 @@ def render_page(title: str, body: str) -> str:
 
         .admin-grid {{
           grid-template-columns: 1fr;
+        }}
+
+        .detail-head {{
+          flex-direction: column;
+        }}
+
+        .main {{
+          padding: 0 0 24px;
         }}
       }}
     </style>
@@ -978,8 +1173,8 @@ def render_home(
             pager_markup = f'<div class="pager">{"".join(pager_links)}</div>'
 
     browse_panel = f"""
-    <section class="panel detail" style="margin-bottom:24px;">
-      {browse_header}
+    <section class="panel detail section-frame" style="margin-bottom:24px;">
+      <div class="section-copy">{browse_header}</div>
       <div class="browse-grid">{browse_markup}</div>
       {pager_markup}
     </section>
@@ -1049,7 +1244,7 @@ def render_home(
             <div>
               <div class="eyebrow">{escape(selected_item.country)} Collection</div>
               <h2 class="detail-title{' returned' if selected_item.is_returned else ''}">{escape(display_title(selected_item.title))}</h2>
-              <div class="subtitle">A lightweight archive view over your imported philatelic metadata and files.</div>
+              <div class="subtitle">A curated reading view for scanned covers, postal markings, route fragments, and imported catalog notes.</div>
             </div>
             <div>
               <div class="pill-row" style="justify-content:flex-end; margin-bottom:10px;">{tag_pills or '<span class="pill">untagged</span>'}</div>
@@ -1057,22 +1252,28 @@ def render_home(
             </div>
           </div>
 
-          <div class="meta-grid">{meta_markup}</div>
+          <div class="detail-columns">
+            <div>
+              <div class="meta-grid">{meta_markup}</div>
 
-          <section class="section">
-            <h2>Assets</h2>
-            <div class="asset-grid">{assets_markup}</div>
-          </section>
+              <section class="section">
+                <h2>Assets</h2>
+                <div class="asset-grid">{assets_markup}</div>
+              </section>
+            </div>
 
-          <section class="section">
-            <h2>Notes</h2>
-            <div class="meta-card"><div class="meta-value">{notes_markup}</div></div>
-          </section>
+            <div class="stack">
+              <section class="section" style="margin-top:0;">
+                <h2>Notes</h2>
+                <div class="meta-card note-card"><div class="meta-value">{notes_markup}</div></div>
+              </section>
 
-          <section class="section">
-            <h2>Tracking Timeline</h2>
-            <div class="timeline">{events_markup}</div>
-          </section>
+              <section class="section" style="margin-top:0;">
+                <h2>Tracking Timeline</h2>
+                <div class="timeline">{events_markup}</div>
+              </section>
+            </div>
+          </div>
         </section>
         """
 
@@ -1090,9 +1291,24 @@ def render_home(
       <aside class="sidebar">
         <div class="eyebrow">Philatelic Catalog</div>
         <h1>Archive Browser</h1>
-        <p class="subtitle">A calm, desk-side view of your collection with search, filtering, and image previews.</p>
+        <p class="subtitle">A quieter way to browse your postal archive, with country-led navigation, scanning context, and catalog notes kept in one place.</p>
 
+        <div class="micro-stat-grid">
+          <div class="micro-stat">
+            <strong>{total_items}</strong>
+            <div class="item-sub">catalogued items</div>
+          </div>
+          <div class="micro-stat">
+            <strong>{len(countries)}</strong>
+            <div class="item-sub">countries / regions</div>
+          </div>
+        </div>
+
+        <div class="sidebar-block">
         <section class="panel filters">
+          <div class="sidebar-heading">
+            <div class="meta-label">Find Something</div>
+          </div>
           <form method="get" action="/">
             <label>
               Search
@@ -1115,19 +1331,46 @@ def render_home(
             <a class="button-link" href="/import">Open Importer</a>
           </div>
         </section>
-
-        <div class="list-meta">
-          <span>{total_items} item{"s" if total_items != 1 else ""}</span>
-          <span>{len(countries)} countries</span>
         </div>
-        <section class="panel filters">
+
+        <hr class="sidebar-divider" />
+        <div class="list-meta">
+          <span>Browse tree</span>
+          <span>{country or "All regions"}</span>
+        </div>
+        <section class="panel filters sidebar-block">
           <div class="meta-label" style="margin-bottom:10px;">Countries</div>
           <div class="country-list">{country_links}</div>
         </section>
-        {f'<section class="panel filters"><div class="meta-label" style="margin-bottom:10px;">Mail Types</div><div class="category-list">{category_links}</div></section>' if country else ""}
+        {f'<section class="panel filters sidebar-block"><div class="meta-label" style="margin-bottom:10px;">Mail Types</div><div class="category-list">{category_links}</div></section>' if country else ""}
       </aside>
 
-      <main class="main">{browse_panel}{detail_markup}</main>
+      <main class="main">
+        <section class="panel masthead">
+          <div class="masthead-grid">
+            <div class="hero-note">
+              <div class="eyebrow">Reading Room</div>
+              <h2>Browse by geography first, then drill into format, route, and markings.</h2>
+              <p class="subtitle">This view is designed to feel less like a raw database and more like a curator's desk: broad structure on the left, focused reading on the right.</p>
+            </div>
+            <div class="hero-stats">
+              <div class="hero-stat">
+                <div class="meta-label">Current Scope</div>
+                <div class="hero-stat-value">{escape(country or "All regions")}</div>
+                <div class="hero-stat-label">{escape(category or "Choose a mail type to narrow further.")}</div>
+              </div>
+              <div class="hero-stat">
+                <div class="meta-label">Selection</div>
+                <div class="hero-stat-value">{total_items}</div>
+                <div class="hero-stat-label">items in the current filtered set</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {browse_panel}
+        {detail_markup}
+      </main>
     </div>
     """
     return render_page("Philatelic Catalog", body)
@@ -1147,13 +1390,35 @@ def render_admin(item: Item, saved: bool = False) -> str:
 
     body = f"""
     <main class="main" style="max-width: 1360px; margin: 0 auto;">
-      <div class="eyebrow">Philatelic Catalog</div>
-      <h1>Admin Console</h1>
-      <p class="subtitle">Fine-tune metadata and add manual tracking events for <strong>{escape(display_title(item.title))}</strong>.</p>
+      <section class="panel masthead" style="margin-bottom:24px;">
+        <div class="masthead-grid">
+          <div class="hero-note">
+            <div class="eyebrow">Philatelic Catalog</div>
+            <h1>Admin Console</h1>
+            <p class="subtitle">Fine-tune metadata, normalize parsed fields, and add manual tracking events for <strong>{escape(display_title(item.title))}</strong>.</p>
+          </div>
+          <div class="hero-stats">
+            <div class="hero-stat">
+              <div class="meta-label">Tracking Number</div>
+              <div class="hero-stat-value">{escape(item.tracking_number or "N/A")}</div>
+              <div class="hero-stat-label">{escape(item.country)} / {escape(item.category)}</div>
+            </div>
+            <div class="hero-stat">
+              <div class="meta-label">Archive ID</div>
+              <div class="hero-stat-value">{escape(item.archive_id)}</div>
+              <div class="hero-stat-label">Manual edits are saved directly into the catalog database.</div>
+            </div>
+          </div>
+        </div>
+      </section>
       {flash}
       <div class="admin-grid">
         <section class="panel admin-form">
-          <h2>Item Metadata</h2>
+          <div class="section-copy">
+            <div class="eyebrow">Metadata</div>
+            <h2>Item Record</h2>
+            <p class="subtitle">Use this side to clean display title, location, tags, and curator notes without touching the original source folder.</p>
+          </div>
           <form method="post" action="/admin/items/{item.id}">
             <label>Title<input type="text" name="title" value="{escape(item.title)}" /></label>
             <label>Tracking Number<input type="text" name="tracking_number" value="{escape(item.tracking_number or '')}" /></label>
@@ -1174,7 +1439,11 @@ def render_admin(item: Item, saved: bool = False) -> str:
         </section>
 
         <section class="panel admin-form">
-          <h2>Add Tracking Event</h2>
+          <div class="section-copy">
+            <div class="eyebrow">Timeline</div>
+            <h2>Add Tracking Event</h2>
+            <p class="subtitle">When importer output is incomplete, this panel lets you patch the route history by hand.</p>
+          </div>
           <form method="post" action="/admin/items/{item.id}">
             <input type="hidden" name="form_kind" value="tracking_event" />
             <label>Occurred At<input type="text" name="event_occurred_at" placeholder="2025-04-11 09:31" /></label>
@@ -1338,16 +1607,38 @@ def render_importer(
 
     body = f"""
     <main class="main" style="max-width: 1200px; margin: 0 auto;">
-      <div class="eyebrow">Philatelic Catalog</div>
-      <h1>Batch Importer</h1>
-      <p class="subtitle">Paste one or more folders, preview the scan, then import them into the managed archive.</p>
+      <section class="panel masthead" style="margin-bottom:24px;">
+        <div class="masthead-grid">
+          <div class="hero-note">
+            <div class="eyebrow">Philatelic Catalog</div>
+            <h1>Batch Importer</h1>
+            <p class="subtitle">Bring in folders carefully: preview the structure, inspect what will be added, then import into the managed archive with a progress view.</p>
+          </div>
+          <div class="hero-stats">
+            <div class="hero-stat">
+              <div class="meta-label">Suggested Source</div>
+              <div class="hero-stat-value">Letters</div>
+              <div class="hero-stat-label">The importer understands the country / category / item folder layout you already use.</div>
+            </div>
+            <div class="hero-stat">
+              <div class="meta-label">Safety Model</div>
+              <div class="hero-stat-value">Preview First</div>
+              <div class="hero-stat-label">Dry runs inspect metadata without touching SQLite or the managed archive.</div>
+            </div>
+          </div>
+        </div>
+      </section>
       {message}
       {progress_markup}
       {summary_markup}
       {preview_markup}
       <div class="admin-grid">
         <section class="panel admin-form">
-          <h2>Import Queue</h2>
+          <div class="section-copy">
+            <div class="eyebrow">Filesystem Intake</div>
+            <h2>Import Queue</h2>
+            <p class="subtitle">Paste one or more folders from disk. This is best for the existing archive root or when you want deterministic source paths.</p>
+          </div>
           <form method="post" action="/import">
             <label>Source Folders
               <textarea name="source_paths" placeholder="/Volumes/Frank Ruan Database/MediaLibrary/Letters">{escape(source_paths)}</textarea>
@@ -1364,7 +1655,11 @@ def render_importer(
         </section>
 
         <section class="panel admin-form">
-          <h2>Upload Folder</h2>
+          <div class="section-copy">
+            <div class="eyebrow">Browser Intake</div>
+            <h2>Upload Folder</h2>
+            <p class="subtitle">Send a local folder directly from the browser when the source is not already reachable on disk from this machine context.</p>
+          </div>
           <form id="upload-form" method="post" action="/import/upload" enctype="multipart/form-data">
             <label>Choose Folder
               <input id="upload-files" type="file" name="files" webkitdirectory directory multiple />
