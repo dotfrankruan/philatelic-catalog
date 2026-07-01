@@ -2,21 +2,25 @@ from __future__ import annotations
 
 from html import escape
 from pathlib import Path
+import re
+import subprocess
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Query
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse, HTMLResponse
 from sqlalchemy import distinct, select
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db.database import get_session
-from app.models import Item
+from app.models import Asset, Item
 from app.services.items import build_item_query
 
 ui_router = APIRouter(include_in_schema=False)
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".heif", ".heic", ".avif", ".tiff"}
+HEIF_SUFFIXES = {".heif", ".heic"}
+DISPLAY_MARKER_RE = re.compile(r"^\s*(\[[^\]]+\]\s*)+")
 
 
 def render_page(title: str, body: str) -> str:
@@ -191,6 +195,17 @@ def render_page(title: str, body: str) -> str:
         font-size: 14px;
       }}
 
+      .tracking-chip {{
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: rgba(184, 106, 99, 0.10);
+        color: #c27f78;
+        font-size: 12px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }}
+
       .detail {{
         padding: 26px;
       }}
@@ -354,9 +369,35 @@ def build_filter_link(item_id: int, q: str, country: str, category: str) -> str:
     return f"/?{urlencode(params)}"
 
 
+def display_title(raw_title: str) -> str:
+    cleaned = DISPLAY_MARKER_RE.sub("", raw_title).strip()
+    return cleaned or raw_title
+
+
+def display_relpath(raw_relpath: str) -> str:
+    parts = Path(raw_relpath).parts
+    if not parts:
+        return raw_relpath
+    cleaned_last = display_title(parts[-1])
+    return "/".join([*parts[:-1], cleaned_last])
+
+
+def resolve_archive_path(asset_path: str) -> Path:
+    relative = Path(asset_path)
+    resolved = (settings.managed_archive_root / relative).resolve()
+    resolved.relative_to(settings.managed_archive_root.resolve())
+    return resolved
+
+
+def build_asset_public_path(asset_path: str, suffix: str) -> str:
+    if suffix in HEIF_SUFFIXES:
+        return f"/asset-preview?{urlencode({'path': asset_path})}"
+    return "/archive/" + "/".join(escape(part) for part in Path(asset_path).parts)
+
+
 def render_asset_card(asset_path: str, kind: str) -> str:
     suffix = Path(asset_path).suffix.lower()
-    public_path = "/archive/" + "/".join(escape(part) for part in Path(asset_path).parts)
+    public_path = build_asset_public_path(asset_path, suffix)
     label = escape(kind.replace("_", " ")) if kind else "asset"
     path_text = escape(asset_path)
 
@@ -386,23 +427,41 @@ def render_home(
     country: str,
     category: str,
 ) -> str:
-    list_markup = []
+    list_sections: list[str] = []
     selected_id = selected_item.id if selected_item else None
-
+    grouped: dict[str, dict[str, list[Item]]] = {}
     for item in items:
-        active_class = " active" if item.id == selected_id else ""
-        href = build_filter_link(item.id, q, country, category)
-        sub_bits = [item.category]
-        if item.tracking_number:
-            sub_bits.append(item.tracking_number)
-        if item.origin:
-            sub_bits.append(item.origin)
-        list_markup.append(
-            f'<a class="item-link{active_class}" href="{href}">'
-            f'<div class="item-country">{escape(item.country)}</div>'
-            f'<div class="item-title">{escape(item.title)}</div>'
-            f'<div class="item-sub">{escape(" · ".join(sub_bits))}</div>'
-            f"</a>"
+        grouped.setdefault(item.country, {}).setdefault(item.category, []).append(item)
+
+    for grouped_country, grouped_categories in grouped.items():
+        category_sections: list[str] = []
+        for grouped_category, grouped_items in grouped_categories.items():
+            item_links = []
+            for item in grouped_items:
+                active_class = " active" if item.id == selected_id else ""
+                href = build_filter_link(item.id, q, country, category)
+                tracking_markup = (
+                    f'<span class="tracking-chip">{escape(item.tracking_number)}</span>'
+                    if item.tracking_number
+                    else f'<span class="item-sub">{escape(grouped_category)}</span>'
+                )
+                item_links.append(
+                    f'<a class="item-link{active_class}" href="{href}">'
+                    f'<div class="item-title">{escape(display_title(item.title))}</div>'
+                    f"<div>{tracking_markup}</div>"
+                    f"</a>"
+                )
+            category_sections.append(
+                f'<section style="margin-top:12px;">'
+                f'<div class="meta-label" style="margin-bottom:10px;">{escape(grouped_category)}</div>'
+                f'<div class="item-list">{"".join(item_links)}</div>'
+                f"</section>"
+            )
+        list_sections.append(
+            f'<section class="panel filters" style="padding:16px 16px 10px; margin-bottom:14px;">'
+            f'<div class="item-country" style="font-size:13px; margin-bottom:4px;">{escape(grouped_country)}</div>'
+            f'{"".join(category_sections)}'
+            f"</section>"
         )
 
     if selected_item is None:
@@ -424,11 +483,11 @@ def render_home(
             ("Country", selected_item.country),
             ("Category", selected_item.category),
             ("Tracking", selected_item.tracking_number or "None"),
-            ("Origin", selected_item.origin or "Unknown"),
-            ("Destination", selected_item.destination or "Unknown"),
             ("Archive ID", selected_item.archive_id),
-            ("Source", selected_item.source_relpath or "Unknown"),
-            ("Status", selected_item.status or "Unknown"),
+            (
+                "Source",
+                display_relpath(selected_item.source_relpath) if selected_item.source_relpath else "Unknown",
+            ),
         ]
         meta_markup = "".join(
             f'<article class="meta-card"><div class="meta-label">{escape(label)}</div>'
@@ -450,17 +509,25 @@ def render_home(
             for event in selected_item.tracking_events
         ) or '<div class="empty">No tracking events yet.</div>'
 
-        notes_markup = escape(selected_item.notes or "No notes yet.").replace("\n", "<br />")
+        notes_text = selected_item.notes or "No notes yet."
+        if selected_item.source_relpath:
+            notes_text = notes_text.replace(
+                selected_item.source_relpath, display_relpath(selected_item.source_relpath)
+            )
+        notes_markup = escape(notes_text).replace("\n", "<br />")
 
         detail_markup = f"""
         <section class="panel detail">
           <div class="detail-head">
             <div>
               <div class="eyebrow">{escape(selected_item.country)} Collection</div>
-              <h2 class="detail-title">{escape(selected_item.title)}</h2>
+              <h2 class="detail-title">{escape(display_title(selected_item.title))}</h2>
               <div class="subtitle">A lightweight archive view over your imported philatelic metadata and files.</div>
             </div>
-            <div class="pill-row">{tag_pills or '<span class="pill">untagged</span>'}</div>
+            <div class="pill-row">
+              {f'<span class="tracking-chip">{escape(selected_item.tracking_number)}</span>' if selected_item.tracking_number else ''}
+              {tag_pills or '<span class="pill">untagged</span>'}
+            </div>
           </div>
 
           <div class="meta-grid">{meta_markup}</div>
@@ -523,7 +590,7 @@ def render_home(
           <span>{len(items)} item{"s" if len(items) != 1 else ""}</span>
           <span>{len(countries)} countries</span>
         </div>
-        <div class="item-list">{''.join(list_markup) or '<div class="empty">No items yet.</div>'}</div>
+        <div class="item-list">{''.join(list_sections) or '<div class="empty">No items yet.</div>'}</div>
       </aside>
 
       <main class="main">{detail_markup}</main>
@@ -562,3 +629,31 @@ def home(
         session.scalars(select(distinct(Item.category)).order_by(Item.category.asc())).all()
     )
     return HTMLResponse(render_home(items, selected_item, countries, categories, q, country, category))
+
+
+@ui_router.get("/asset-preview", response_class=FileResponse)
+def asset_preview(path: str = Query(...), session: Session = Depends(get_session)) -> FileResponse:
+    asset = session.scalar(select(Asset).where(Asset.path == path))
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    source_path = resolve_archive_path(asset.path)
+    if not source_path.exists():
+        raise HTTPException(status_code=404, detail="Archive file not found")
+
+    suffix = source_path.suffix.lower()
+    if suffix not in HEIF_SUFFIXES:
+        return FileResponse(source_path)
+
+    settings.preview_cache_root.mkdir(parents=True, exist_ok=True)
+    preview_path = settings.preview_cache_root / f"{source_path.stem}.jpg"
+    if not preview_path.exists() or preview_path.stat().st_mtime < source_path.stat().st_mtime:
+        result = subprocess.run(
+            ["sips", "-s", "format", "jpeg", str(source_path), "--out", str(preview_path)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0 or not preview_path.exists():
+            raise HTTPException(status_code=500, detail="Preview generation failed")
+
+    return FileResponse(preview_path, media_type="image/jpeg")

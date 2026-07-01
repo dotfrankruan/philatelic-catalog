@@ -10,3 +10,4 @@ def test_home_page_renders() -> None:
         assert response.status_code == 200
         assert "Archive Browser" in response.text
         assert "Philatelic Catalog" in response.text
+        assert "Apply Filters" in response.text

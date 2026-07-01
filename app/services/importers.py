@@ -6,6 +6,7 @@ import re
 import shutil
 from pathlib import Path
 import uuid
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -16,6 +17,8 @@ HIDDEN_PREFIXES = (".", "._")
 TRACKING_TOKEN_RE = re.compile(r"[A-Z0-9-]{6,}")
 BRACKET_TAG_RE = re.compile(r"\[([^\]]+)\]")
 EVENT_LINE_RE = re.compile(r"^(?P<timestamp>[A-Za-z]+ \d{1,2}, \d{4} \d{2}:\d{2}), (?P<rest>.+)$")
+TRACKING_METADATA_FILENAMES = {"manifest.txt"}
+TRACKING_METADATA_SUFFIXES = {".yaml", ".yml"}
 
 STATUS_KEYWORDS = {
     "delivered",
@@ -133,6 +136,14 @@ def classify_asset_kind(file_path: Path) -> str:
     return "file"
 
 
+def should_import_as_asset(file_path: Path) -> bool:
+    if file_path.name.lower() in TRACKING_METADATA_FILENAMES:
+        return False
+    if file_path.suffix.lower() in TRACKING_METADATA_SUFFIXES:
+        return False
+    return True
+
+
 def archive_bucket_for_id(object_id: str) -> str:
     return object_id[0].upper()
 
@@ -167,6 +178,103 @@ def parse_manifest_text(manifest_text: str) -> tuple[str | None, str | None, str
         if parsed_event:
             events.append(parsed_event)
     return tracking_number, package_status, route, events
+
+
+def parse_yaml_tracking_text(yaml_text: str) -> list[ParsedTrackingEvent]:
+    try:
+        import yaml  # type: ignore
+    except Exception:
+        return []
+
+    try:
+        payload = yaml.safe_load(yaml_text)
+    except Exception:
+        return []
+    return extract_tracking_events_from_yaml(payload)
+
+
+def extract_tracking_events_from_yaml(payload: Any) -> list[ParsedTrackingEvent]:
+    if isinstance(payload, list):
+        events: list[ParsedTrackingEvent] = []
+        for entry in payload:
+            event = yaml_entry_to_tracking_event(entry)
+            if event:
+                events.append(event)
+        return events
+
+    if isinstance(payload, dict):
+        for key in ("tracking_events", "events", "history", "timeline", "tracking"):
+            candidate = payload.get(key)
+            events = extract_tracking_events_from_yaml(candidate)
+            if events:
+                return events
+    return []
+
+
+def yaml_entry_to_tracking_event(entry: Any) -> ParsedTrackingEvent | None:
+    if not isinstance(entry, dict):
+        return None
+
+    timestamp_value = None
+    for key in ("occurred_at", "timestamp", "datetime", "date", "time"):
+        if entry.get(key):
+            timestamp_value = str(entry[key]).strip()
+            break
+    if not timestamp_value:
+        return None
+
+    occurred_at = parse_tracking_timestamp(timestamp_value)
+    if occurred_at is None:
+        return None
+
+    status = None
+    for key in ("status", "event", "message", "title"):
+        if entry.get(key):
+            status = str(entry[key]).strip()
+            break
+    if not status:
+        return None
+
+    location = None
+    for key in ("location", "place", "facility", "city"):
+        if entry.get(key):
+            location = str(entry[key]).strip()
+            break
+
+    details = None
+    for key in ("details", "description", "note", "content"):
+        if entry.get(key):
+            details = str(entry[key]).strip()
+            break
+
+    source = str(entry.get("source", "yaml")).strip() or "yaml"
+    return ParsedTrackingEvent(
+        occurred_at=occurred_at,
+        location=location,
+        status=status,
+        details=details,
+        source=source,
+    )
+
+
+def parse_tracking_timestamp(value: str) -> datetime | None:
+    formats = (
+        "%B %d, %Y %H:%M",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%d",
+    )
+    for fmt in formats:
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def parse_tracking_event_line(line: str) -> ParsedTrackingEvent | None:
@@ -219,33 +327,27 @@ def build_parsed_item(item_dir: Path, source_root: Path, archive_root: Path) -> 
     archive_id = str(uuid.uuid4()).upper()
 
     manifest_path = next((path for path in visible_files(item_dir) if path.name.lower() == "manifest.txt"), None)
+    yaml_paths = [path for path in visible_files(item_dir) if path.suffix.lower() in {".yaml", ".yml"}]
     manifest_text = manifest_path.read_text(encoding="utf-8", errors="replace") if manifest_path else ""
     manifest_tracking, package_status, route, tracking_events = parse_manifest_text(manifest_text)
+    for yaml_path in yaml_paths:
+        yaml_text = yaml_path.read_text(encoding="utf-8", errors="replace")
+        tracking_events.extend(parse_yaml_tracking_text(yaml_text))
 
     if manifest_tracking:
         tracking_number = manifest_tracking
 
-    destination = None
-    if route and "->" in route:
-        _, _, destination = route.partition("->")
-        destination = normalize_name(destination) or None
-        if destination == "Unknown":
-            destination = None
-
     ordered_events = sorted(tracking_events, key=lambda event: event.occurred_at)
-    sent_on = ordered_events[0].occurred_at.date() if ordered_events else None
-    received_on = None
-    for event in reversed(ordered_events):
-        lowered = event.status.lower()
-        if "deliver" in lowered or "签收" in event.status:
-            received_on = event.occurred_at.date()
-            break
 
     notes_parts = [f"Imported from {source_relpath}"]
     if route:
         notes_parts.append(f"Route: {route}")
 
-    asset_files = [(classify_asset_kind(path), path) for path in visible_files(item_dir)]
+    asset_files = [
+        (classify_asset_kind(path), path)
+        for path in visible_files(item_dir)
+        if should_import_as_asset(path)
+    ]
 
     return ParsedItem(
         country=country,
@@ -254,11 +356,11 @@ def build_parsed_item(item_dir: Path, source_root: Path, archive_root: Path) -> 
         tracking_number=tracking_number,
         source_relpath=source_relpath,
         archive_id=archive_id,
-        origin=origin,
-        destination=destination,
-        sent_on=sent_on,
-        received_on=received_on,
-        status=package_status,
+        origin=None,
+        destination=None,
+        sent_on=None,
+        received_on=None,
+        status=None,
         notes="\n".join(notes_parts),
         is_returned="[RETURN]" in title.upper() or "(RETURNED)" in title.upper(),
         is_self_mail="SELF-MAIL" in title.upper(),
