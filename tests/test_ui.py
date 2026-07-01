@@ -72,6 +72,23 @@ def test_display_location_uses_parenthetical_suffix_or_na() -> None:
     assert ui_module.display_location("1217507254208 (Changzhou, Jiangsu)", "Manual Update") == "Manual Update"
 
 
+def test_parse_location_parts_splits_common_comma_format() -> None:
+    parts = ui_module.parse_location_parts("1217507254208 (Changzhou, Jiangsu, China)", None)
+
+    assert parts["location"] == "Changzhou, Jiangsu, China"
+    assert parts["city"] == "Changzhou"
+    assert parts["region"] == "Jiangsu"
+    assert parts["country"] == "China"
+
+
+def test_parse_location_parts_returns_na_when_missing() -> None:
+    parts = ui_module.parse_location_parts("1217507254208", None)
+
+    assert parts["city"] == "N/A"
+    assert parts["region"] == "N/A"
+    assert parts["country"] == "N/A"
+
+
 def test_home_page_uses_hierarchical_browser() -> None:
     with TestClient(app) as client:
         response = client.get("/?country=Australia")
@@ -87,3 +104,12 @@ def test_admin_page_shows_location_field() -> None:
 
         assert response.status_code == 200
         assert "Location" in response.text
+
+
+def test_detail_page_shows_location_breakdown() -> None:
+    with TestClient(app) as client:
+        response = client.get("/?country=Australia&category=Registered+Mail")
+
+        assert response.status_code == 200
+        assert "City" in response.text
+        assert "Region" in response.text

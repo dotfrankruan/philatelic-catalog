@@ -296,6 +296,11 @@ def render_page(title: str, body: str) -> str:
         margin-bottom: 4px;
       }}
 
+      .location-breakdown {{
+        display: grid;
+        gap: 10px;
+      }}
+
       .button-link {{
         display: inline-block;
         border-radius: 999px;
@@ -538,6 +543,32 @@ def display_location(raw_title: str, stored_location: str | None) -> str:
     return parsed_location or "N/A"
 
 
+def parse_location_parts(raw_title: str, stored_location: str | None) -> dict[str, str]:
+    location_text = display_location(raw_title, stored_location)
+    if location_text == "N/A":
+        return {"location": "N/A", "city": "N/A", "region": "N/A", "country": "N/A"}
+
+    normalized = normalize_text_for_display(location_text)
+    segments = [normalize_text_for_display(part) for part in re.split(r"\s*(?:,|/|->|\|)\s*", normalized) if normalize_text_for_display(part)]
+    city = "N/A"
+    region = "N/A"
+    country = "N/A"
+
+    if len(segments) >= 1:
+        city = segments[0]
+    if len(segments) >= 2:
+        region = segments[1]
+    if len(segments) >= 3:
+        country = ", ".join(segments[2:])
+
+    return {
+        "location": normalized,
+        "city": city,
+        "region": region,
+        "country": country,
+    }
+
+
 def normalize_text_for_display(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
@@ -734,7 +765,7 @@ def render_home(
         item_cards = []
         for item in items:
             title_text = display_title(item.title)
-            location_text = display_location(item.title, item.origin)
+            location_parts = parse_location_parts(item.title, item.origin)
             title_classes = "item-title"
             if item.is_returned:
                 title_classes += " returned"
@@ -743,7 +774,7 @@ def render_home(
             item_cards.append(
                 f'<a class="browse-card{" active" if item.id == selected_id else ""}" href="{build_home_link(q=q, country=country, category=category, item_id=item.id, page=page)}">'
                 f'<div class="{title_classes}">{escape(title_text)}</div>'
-                f'<div class="inline-meta"><div class="meta-label">Location</div><div class="item-sub">{escape(location_text)}</div></div>'
+                f'<div class="inline-meta"><div class="meta-label">Location</div><div class="item-sub">{escape(location_parts["location"])}</div></div>'
                 f'<div class="item-sub">{escape(subtitle_text)}</div>'
                 f"{returned_badge}"
                 f"</a>"
@@ -778,6 +809,7 @@ def render_home(
             "</div></section>"
         )
     else:
+        location_parts = parse_location_parts(selected_item.title, selected_item.origin)
         visible_tag_names = sorted({tag.name for tag in selected_item.tags if tag.name != "returned"})
         tag_pills = "".join(
             f'<span class="pill">{escape(tag_name)}</span>' for tag_name in visible_tag_names
@@ -790,7 +822,10 @@ def render_home(
         meta_cards = [
             ("Country", selected_item.country),
             ("Category", selected_item.category),
-            ("Location", display_location(selected_item.title, selected_item.origin)),
+            ("Location", location_parts["location"]),
+            ("City", location_parts["city"]),
+            ("Region", location_parts["region"]),
+            ("Location Country", location_parts["country"]),
             ("Tracking", selected_item.tracking_number or "None"),
             ("Archive ID", selected_item.archive_id),
             (
