@@ -121,6 +121,28 @@ def test_importer_page_renders_existing_job_state(monkeypatch) -> None:
     assert "job-123" in response.text
 
 
+def test_importer_page_completed_job_does_not_poll_again(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ui_module,
+        "snapshot_job",
+        lambda job_id: {
+            "job_id": job_id,
+            "state": "completed",
+            "completed": 3,
+            "total": 3,
+            "current_item": "",
+            "summary": {"scanned": 3, "imported": 2, "updated": 1, "copied_assets": 4, "tracking_events": 7, "dry_run": False},
+        },
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/import?job_id=job-123")
+
+    assert response.status_code == 200
+    assert "Import complete." in response.text
+    assert "fetch(`/import/jobs/" not in response.text
+
+
 def test_importer_job_status_returns_json(monkeypatch) -> None:
     monkeypatch.setattr(
         ui_module,

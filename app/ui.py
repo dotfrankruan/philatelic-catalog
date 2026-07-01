@@ -1215,6 +1215,9 @@ def render_importer(
         total = int(job.get("total", 0) or 0)
         current_item = str(job.get("current_item", "") or "")
         percent = 0 if total <= 0 else int((completed / total) * 100)
+        progress_text = current_item or (
+            "Import complete." if state == "completed" else "Import failed." if state == "failed" else "Waiting to start..."
+        )
         progress_markup = f"""
         <section class="section progress-shell">
           <h2>Live Progress</h2>
@@ -1223,11 +1226,12 @@ def render_importer(
             <div class="meta-value" id="import-state">{escape(state.title())}</div>
             <div class="progress-bar"><div class="progress-fill" id="import-progress" style="width:{percent}%;"></div></div>
             <div class="item-sub" id="import-progress-text">{completed} / {total or '?'}</div>
-            <div class="item-sub" id="import-current-item">{escape(current_item or 'Waiting to start...')}</div>
+            <div class="item-sub" id="import-current-item">{escape(progress_text)}</div>
           </div>
         </section>
         """
-        script_markup = f"""
+        if state not in {"completed", "failed"}:
+            script_markup = f"""
         <script>
         const importJobId = {job_id!r};
         async function pollImportJob() {{
