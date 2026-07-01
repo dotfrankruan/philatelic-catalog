@@ -5,6 +5,7 @@ from datetime import date, datetime
 import re
 import shutil
 from pathlib import Path
+import uuid
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -45,8 +46,8 @@ class ParsedItem:
     category: str
     title: str
     tracking_number: str | None
-    source_path: str
-    archive_path: str
+    source_relpath: str
+    archive_id: str
     origin: str | None
     destination: str | None
     sent_on: date | None
@@ -132,6 +133,17 @@ def classify_asset_kind(file_path: Path) -> str:
     return "file"
 
 
+def archive_bucket_for_id(object_id: str) -> str:
+    return object_id[0].upper()
+
+
+def build_archive_asset_relpath(archive_id: str, source_path: Path) -> str:
+    bucket = archive_bucket_for_id(archive_id)
+    extension = source_path.suffix.lower()
+    asset_id = uuid.uuid4().hex.upper()
+    return f"{bucket}/{archive_id}-{asset_id}{extension}"
+
+
 def parse_manifest_text(manifest_text: str) -> tuple[str | None, str | None, str | None, list[ParsedTrackingEvent]]:
     tracking_number = None
     package_status = None
@@ -200,10 +212,11 @@ def build_parsed_item(item_dir: Path, source_root: Path, archive_root: Path) -> 
     country = relative.parts[0]
     category = relative.parts[1]
     title = normalize_name(relative.name)
+    source_relpath = relative.as_posix()
     origin = extract_origin(title)
     tags = extract_tags(title)
     tracking_number = derive_tracking_number(title)
-    archive_dir = archive_root / country / category / relative.name
+    archive_id = str(uuid.uuid4()).upper()
 
     manifest_path = next((path for path in visible_files(item_dir) if path.name.lower() == "manifest.txt"), None)
     manifest_text = manifest_path.read_text(encoding="utf-8", errors="replace") if manifest_path else ""
@@ -228,7 +241,7 @@ def build_parsed_item(item_dir: Path, source_root: Path, archive_root: Path) -> 
             received_on = event.occurred_at.date()
             break
 
-    notes_parts = [f"Imported from {item_dir}"]
+    notes_parts = [f"Imported from {source_relpath}"]
     if route:
         notes_parts.append(f"Route: {route}")
 
@@ -239,8 +252,8 @@ def build_parsed_item(item_dir: Path, source_root: Path, archive_root: Path) -> 
         category=category,
         title=title,
         tracking_number=tracking_number,
-        source_path=str(item_dir),
-        archive_path=str(archive_dir),
+        source_relpath=source_relpath,
+        archive_id=archive_id,
         origin=origin,
         destination=destination,
         sent_on=sent_on,
@@ -255,16 +268,17 @@ def build_parsed_item(item_dir: Path, source_root: Path, archive_root: Path) -> 
     )
 
 
-def copy_assets(asset_files: list[tuple[str, Path]], destination_dir: Path, dry_run: bool) -> list[tuple[str, Path]]:
+def copy_assets(
+    asset_files: list[tuple[str, Path]], archive_root: Path, archive_id: str, dry_run: bool
+) -> list[tuple[str, Path]]:
     copied: list[tuple[str, Path]] = []
-    if not dry_run:
-        destination_dir.mkdir(parents=True, exist_ok=True)
-
     for kind, source_path in asset_files:
-        destination_path = destination_dir / source_path.name
+        relative_path = Path(build_archive_asset_relpath(archive_id, source_path))
+        destination_path = archive_root / relative_path
         if not dry_run:
+            destination_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_path, destination_path)
-        copied.append((kind, destination_path))
+        copied.append((kind, relative_path))
     return copied
 
 
@@ -279,7 +293,7 @@ def get_or_create_tag(session: Session, tag_name: str) -> Tag:
 
 
 def upsert_item_from_parsed(
-    session: Session, parsed: ParsedItem, dry_run: bool
+    session: Session, parsed: ParsedItem, archive_root: Path, dry_run: bool
 ) -> tuple[Item | None, bool, int, int]:
     existing = session.scalar(
         select(Item)
@@ -288,7 +302,7 @@ def upsert_item_from_parsed(
             selectinload(Item.tags),
             selectinload(Item.tracking_events),
         )
-        .where(Item.source_path == parsed.source_path)
+        .where(Item.source_relpath == parsed.source_relpath)
     )
 
     created = existing is None
@@ -297,8 +311,9 @@ def upsert_item_from_parsed(
     item.category = parsed.category
     item.title = parsed.title
     item.tracking_number = parsed.tracking_number
-    item.source_path = parsed.source_path
-    item.archive_path = parsed.archive_path
+    item.source_relpath = parsed.source_relpath
+    if created:
+        item.archive_id = parsed.archive_id
     item.origin = parsed.origin
     item.destination = parsed.destination
     item.sent_on = parsed.sent_on
@@ -314,14 +329,12 @@ def upsert_item_from_parsed(
     session.add(item)
     session.flush()
 
-    existing_assets = {asset.path: asset for asset in item.assets}
-    copied_assets = copy_assets(parsed.asset_files, Path(parsed.archive_path), dry_run=False)
+    for asset in list(item.assets):
+        session.delete(asset)
+
+    copied_assets = copy_assets(parsed.asset_files, archive_root, item.archive_id, dry_run=False)
     for kind, copied_path in copied_assets:
-        asset = existing_assets.get(str(copied_path))
-        if asset is None:
-            session.add(Asset(item_id=item.id, kind=kind, path=str(copied_path)))
-        else:
-            asset.kind = kind
+        session.add(Asset(item_id=item.id, kind=kind, path=copied_path.as_posix()))
 
     item.tags.clear()
     for tag_name in parsed.tags:
@@ -367,7 +380,9 @@ def import_letters_archive(
     for item_dir in item_directories:
         parsed = build_parsed_item(item_dir, source_root, archive_root)
         summary.scanned += 1
-        _, created, copied_assets, added_events = upsert_item_from_parsed(session, parsed, dry_run=dry_run)
+        _, created, copied_assets, added_events = upsert_item_from_parsed(
+            session, parsed, archive_root=archive_root, dry_run=dry_run
+        )
         if created:
             summary.imported += 1
         else:

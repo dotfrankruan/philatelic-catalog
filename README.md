@@ -4,7 +4,7 @@
 
 ## Goals
 
-- Keep managed archive files in the filesystem.
+- Keep managed archive files in the filesystem using UUID-based relative object paths.
 - Store metadata, tags, and tracking history in SQLite.
 - Expose a clean REST API for future batch importers and integrations.
 
@@ -61,10 +61,12 @@ Notes:
 
 ## Design Notes
 
-- The database stores paths, not binary files.
+- The database stores relative archive paths, not binary files.
 - The intended ingest flow is copy-based on local macOS APFS storage.
+- Imported files do not preserve the source directory layout.
+- Archive files are bucketed under top-level `0-9` and `A-F` directories with UUID-based filenames.
 - `items` is the core entity.
-- `assets` stores related files such as `front`, `back`, `manifest`, and `invoice`.
+- `assets` stores related files and optional descriptive attributes such as `front`, `back`, `content`, `manifest`, or `invoice`.
 - `tracking_events` is separate from freeform notes so postal history stays queryable.
 
 ## Next Good Steps

@@ -44,6 +44,8 @@ def test_build_parsed_item_infers_tracking_and_flags(tmp_path: Path) -> None:
     assert parsed.country == "Mainland China"
     assert parsed.category == "Postcards"
     assert parsed.tracking_number == "7000440251050"
+    assert parsed.source_relpath == "Mainland China/Postcards/[RETURN] 7000440251050 (Nanjing, Jiangsu)"
+    assert len(parsed.archive_id) == 36
     assert parsed.origin == "Nanjing, Jiangsu"
     assert parsed.is_returned is True
     assert "return" in parsed.tags
@@ -80,8 +82,11 @@ def test_import_letters_archive_copies_and_persists(tmp_path: Path) -> None:
         assert summary.copied_assets == 3
         item = session.scalar(select(Item))
         assert item is not None
-        assert item.source_path == str(item_dir)
-        assert item.archive_path == str(archive_root / "New Zealand" / "Parcels" / "CC554844919NZ")
-        assert (archive_root / "New Zealand" / "Parcels" / "CC554844919NZ" / "front.png").exists()
+        assert item.source_relpath == "New Zealand/Parcels/CC554844919NZ"
+        assert len(item.archive_id) == 36
+        assert all(asset.path[0] in "0123456789ABCDEF" for asset in item.assets)
+        assert all(len(Path(asset.path).parts) == 2 for asset in item.assets)
+        assert all(Path(asset.path).is_absolute() is False for asset in item.assets)
+        assert all((archive_root / asset.path).exists() for asset in item.assets)
         assert len(item.assets) == 3
         assert len(item.tracking_events) == 2

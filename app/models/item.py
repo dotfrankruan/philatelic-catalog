@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+import uuid
 
 from sqlalchemy import Boolean, Date, DateTime, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -16,8 +17,10 @@ class Item(Base):
     category: Mapped[str] = mapped_column(String(120), index=True)
     tracking_number: Mapped[str | None] = mapped_column(String(120), unique=True, index=True)
     title: Mapped[str] = mapped_column(String(255))
-    source_path: Mapped[str | None] = mapped_column(String(2048), unique=True, index=True)
-    archive_path: Mapped[str | None] = mapped_column(String(2048), unique=True)
+    source_relpath: Mapped[str | None] = mapped_column(String(2048), unique=True, index=True)
+    archive_id: Mapped[str] = mapped_column(
+        String(36), unique=True, index=True, default=lambda: str(uuid.uuid4())
+    )
     origin: Mapped[str | None] = mapped_column(String(255))
     destination: Mapped[str | None] = mapped_column(String(255))
     sent_on: Mapped[date | None] = mapped_column(Date())

@@ -40,6 +40,7 @@ def sqlite_database_path() -> Path | None:
 def ensure_database_compatibility(recreate_db: bool) -> None:
     db_path = sqlite_database_path()
     if recreate_db and db_path is not None:
+        engine.dispose()
         db_path.unlink(missing_ok=True)
 
     inspector = inspect(engine)
@@ -47,7 +48,7 @@ def ensure_database_compatibility(recreate_db: bool) -> None:
         return
 
     column_names = {column["name"] for column in inspector.get_columns("items")}
-    required_columns = {"source_path", "archive_path"}
+    required_columns = {"source_relpath", "archive_id"}
     if required_columns.issubset(column_names):
         return
 
