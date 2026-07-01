@@ -22,7 +22,8 @@ ui_router = APIRouter(include_in_schema=False)
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".heif", ".heic", ".avif", ".tiff"}
 HEIF_SUFFIXES = {".heif", ".heic"}
-DISPLAY_MARKER_RE = re.compile(r"^\s*(\[[^\]]+\]\s*)+")
+DISPLAY_MARKER_RE = re.compile(r"\[[^\]]+\]")
+PAGE_SIZE = 12
 
 
 def render_page(title: str, body: str) -> str:
@@ -170,6 +171,30 @@ def render_page(title: str, body: str) -> str:
         gap: 10px;
       }}
 
+      .country-list,
+      .category-list,
+      .browse-grid,
+      .pager {{
+        display: grid;
+        gap: 10px;
+      }}
+
+      .browse-card,
+      .nav-link {{
+        display: block;
+        padding: 14px 16px;
+        border-radius: 18px;
+        border: 1px solid rgba(213, 200, 180, 0.7);
+        background: rgba(255,255,255,0.58);
+      }}
+
+      .nav-link.active,
+      .browse-card.active {{
+        border-color: var(--accent-soft);
+        box-shadow: inset 0 0 0 1px rgba(156, 79, 45, 0.12);
+        background: linear-gradient(180deg, rgba(255,255,255,0.85), rgba(239,231,217,0.95));
+      }}
+
       .item-link {{
         display: block;
         padding: 14px 16px;
@@ -200,6 +225,26 @@ def render_page(title: str, body: str) -> str:
       .item-sub {{
         color: var(--muted);
         font-size: 14px;
+      }}
+
+      .browse-grid {{
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      }}
+
+      .count-pill {{
+        display: inline-block;
+        margin-top: 8px;
+        padding: 5px 10px;
+        border-radius: 999px;
+        background: rgba(156, 79, 45, 0.08);
+        color: var(--accent);
+        font-size: 12px;
+      }}
+
+      .pager {{
+        grid-auto-flow: column;
+        justify-content: start;
+        margin-top: 18px;
       }}
 
       .item-title.returned,
@@ -435,20 +480,37 @@ def render_page(title: str, body: str) -> str:
 </html>"""
 
 
-def build_filter_link(item_id: int, q: str, country: str, category: str) -> str:
-    params = {"item": item_id}
+def build_home_link(
+    *,
+    q: str = "",
+    country: str = "",
+    category: str = "",
+    item_id: int | None = None,
+    page: int | None = None,
+) -> str:
+    params: dict[str, str | int] = {}
     if q:
         params["q"] = q
     if country:
         params["country"] = country
     if category:
         params["category"] = category
+    if item_id is not None:
+        params["item"] = item_id
+    if page is not None and page > 1:
+        params["page"] = page
+    if not params:
+        return "/"
     return f"/?{urlencode(params)}"
 
 
 def display_title(raw_title: str) -> str:
-    cleaned = DISPLAY_MARKER_RE.sub("", raw_title).strip()
+    cleaned = normalize_text_for_display(DISPLAY_MARKER_RE.sub(" ", raw_title))
     return cleaned or raw_title
+
+
+def normalize_text_for_display(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def display_relpath(raw_relpath: str) -> str:
@@ -583,53 +645,105 @@ def render_home(
     selected_item: Item | None,
     countries: list[str],
     categories: list[str],
+    country_counts: dict[str, int],
+    category_counts: dict[str, int],
     q: str,
     country: str,
     category: str,
+    page: int,
+    total_items: int,
+    total_pages: int,
 ) -> str:
-    list_sections: list[str] = []
     selected_id = selected_item.id if selected_item else None
-    grouped: dict[str, dict[str, list[Item]]] = {}
-    for item in items:
-        grouped.setdefault(item.country, {}).setdefault(item.category, []).append(item)
 
-    for grouped_country, grouped_categories in grouped.items():
-        category_sections: list[str] = []
-        for grouped_category, grouped_items in grouped_categories.items():
-            item_links = []
-            for item in grouped_items:
-                active_class = " active" if item.id == selected_id else ""
-                href = build_filter_link(item.id, q, country, category)
-                title_text = display_title(item.title)
-                title_classes = "item-title"
-                if item.is_returned:
-                    title_classes += " returned"
-                subtitle_text = grouped_category
-                if item.tracking_number and title_text.strip().upper() != item.tracking_number.strip().upper():
-                    subtitle_text = item.tracking_number
-                item_links.append(
-                    f'<a class="item-link{active_class}" href="{href}">'
-                    f'<div class="{title_classes}">{escape(title_text)}</div>'
-                    f'<div class="item-sub">{escape(subtitle_text)}</div>'
-                    f"</a>"
-                )
-            category_sections.append(
-                f'<section style="margin-top:12px;">'
-                f'<div class="meta-label" style="margin-bottom:10px;">{escape(grouped_category)}</div>'
-                f'<div class="item-list">{"".join(item_links)}</div>'
-                f"</section>"
-            )
-        list_sections.append(
-            f'<section class="panel filters" style="padding:16px 16px 10px; margin-bottom:14px;">'
-            f'<div class="item-country" style="font-size:13px; margin-bottom:4px;">{escape(grouped_country)}</div>'
-            f'{"".join(category_sections)}'
-            f"</section>"
+    country_links = "".join(
+        f'<a class="nav-link{" active" if value == country else ""}" href="{build_home_link(q=q, country=value)}">'
+        f'<div class="item-country">{escape(value)}</div>'
+        f'<div class="item-sub">{country_counts.get(value, 0)} item{"s" if country_counts.get(value, 0) != 1 else ""}</div>'
+        f"</a>"
+        for value in countries
+    ) or '<div class="empty">No countries yet.</div>'
+
+    category_links = ""
+    if country:
+        category_links = "".join(
+            f'<a class="nav-link{" active" if value == category else ""}" href="{build_home_link(q=q, country=country, category=value)}">'
+            f'<div class="meta-label">{escape(value)}</div>'
+            f'<div class="item-sub">{category_counts.get(value, 0)} item{"s" if category_counts.get(value, 0) != 1 else ""}</div>'
+            f"</a>"
+            for value in categories
+        ) or '<div class="empty">No categories for this country.</div>'
+
+    browse_header = ""
+    browse_markup = ""
+    pager_markup = ""
+
+    if not country:
+        browse_header = '<div class="eyebrow">Browse Countries</div><h2>Select a country or region</h2>'
+        browse_markup = "".join(
+            f'<a class="browse-card" href="{build_home_link(q=q, country=value)}">'
+            f'<div class="item-country">{escape(value)}</div>'
+            f'<div class="meta-value">{country_counts.get(value, 0)} item{"s" if country_counts.get(value, 0) != 1 else ""}</div>'
+            f"</a>"
+            for value in countries
+        ) or '<div class="empty">No countries yet.</div>'
+    elif not category:
+        browse_header = f'<div class="eyebrow">{escape(country)}</div><h2>Choose a mail type</h2>'
+        browse_markup = "".join(
+            f'<a class="browse-card" href="{build_home_link(q=q, country=country, category=value)}">'
+            f'<div class="meta-label">{escape(value)}</div>'
+            f'<div class="meta-value">{category_counts.get(value, 0)} item{"s" if category_counts.get(value, 0) != 1 else ""}</div>'
+            f"</a>"
+            for value in categories
+        ) or '<div class="empty">No categories for this country.</div>'
+    else:
+        browse_header = (
+            f'<div class="eyebrow">{escape(country)} / {escape(category)}</div>'
+            f'<h2>Items on this page</h2>'
+            f'<p class="subtitle" style="margin-bottom:16px;">{total_items} total item{"s" if total_items != 1 else ""} in this section.</p>'
         )
+        item_cards = []
+        for item in items:
+            title_text = display_title(item.title)
+            title_classes = "item-title"
+            if item.is_returned:
+                title_classes += " returned"
+            subtitle_text = item.tracking_number or item.category
+            returned_badge = '<span class="count-pill">Returned</span>' if item.is_returned else ""
+            item_cards.append(
+                f'<a class="browse-card{" active" if item.id == selected_id else ""}" href="{build_home_link(q=q, country=country, category=category, item_id=item.id, page=page)}">'
+                f'<div class="{title_classes}">{escape(title_text)}</div>'
+                f'<div class="item-sub">{escape(subtitle_text)}</div>'
+                f"{returned_badge}"
+                f"</a>"
+            )
+        browse_markup = "".join(item_cards) or '<div class="empty">No items on this page.</div>'
+
+        if total_pages > 1:
+            pager_links = []
+            if page > 1:
+                pager_links.append(
+                    f'<a class="button-link" href="{build_home_link(q=q, country=country, category=category, item_id=selected_id, page=page - 1)}">Previous</a>'
+                )
+            pager_links.append(f'<span class="pill">Page {page} of {total_pages}</span>')
+            if page < total_pages:
+                pager_links.append(
+                    f'<a class="button-link" href="{build_home_link(q=q, country=country, category=category, item_id=selected_id, page=page + 1)}">Next</a>'
+                )
+            pager_markup = f'<div class="pager">{"".join(pager_links)}</div>'
+
+    browse_panel = f"""
+    <section class="panel detail" style="margin-bottom:24px;">
+      {browse_header}
+      <div class="browse-grid">{browse_markup}</div>
+      {pager_markup}
+    </section>
+    """
 
     if selected_item is None:
         detail_markup = (
             '<section class="panel detail"><div class="empty">'
-            "<h2>No item selected</h2><p>Import a few items or change the filters to start browsing.</p>"
+            "<h2>No item selected</h2><p>Choose a country, then a mail type, then pick an item to inspect.</p>"
             "</div></section>"
         )
     else:
@@ -753,13 +867,17 @@ def render_home(
         </section>
 
         <div class="list-meta">
-          <span>{len(items)} item{"s" if len(items) != 1 else ""}</span>
+          <span>{total_items} item{"s" if total_items != 1 else ""}</span>
           <span>{len(countries)} countries</span>
         </div>
-        <div class="item-list">{''.join(list_sections) or '<div class="empty">No items yet.</div>'}</div>
+        <section class="panel filters">
+          <div class="meta-label" style="margin-bottom:10px;">Countries</div>
+          <div class="country-list">{country_links}</div>
+        </section>
+        {f'<section class="panel filters"><div class="meta-label" style="margin-bottom:10px;">Mail Types</div><div class="category-list">{category_links}</div></section>' if country else ""}
       </aside>
 
-      <main class="main">{detail_markup}</main>
+      <main class="main">{browse_panel}{detail_markup}</main>
     </div>
     """
     return render_page("Philatelic Catalog", body)
@@ -918,9 +1036,24 @@ def home(
     q: str = "",
     country: str = "",
     category: str = "",
+    page: int = 1,
     session: Session = Depends(get_session),
 ) -> HTMLResponse:
-    items = list(
+    q_only_items = list(
+        session.scalars(
+            build_item_query(
+                q=q or None,
+            )
+        ).all()
+    )
+    country_counts: dict[str, int] = {}
+    category_counts: dict[str, int] = {}
+    for candidate in q_only_items:
+        country_counts[candidate.country] = country_counts.get(candidate.country, 0) + 1
+        if not country or candidate.country == country:
+            category_counts[candidate.category] = category_counts.get(candidate.category, 0) + 1
+
+    all_items = list(
         session.scalars(
             build_item_query(
                 country=country or None,
@@ -929,19 +1062,38 @@ def home(
             )
         ).all()
     )
-    selected_item = None
-    if item is not None:
-        selected_item = next((candidate for candidate in items if candidate.id == item), None)
-    if selected_item is None and items:
-        selected_item = items[0]
 
-    countries = list(
-        session.scalars(select(distinct(Item.country)).order_by(Item.country.asc())).all()
+    total_items = len(all_items)
+    total_pages = max(1, (total_items + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = max(1, min(page, total_pages))
+    page_start = (page - 1) * PAGE_SIZE
+    items = all_items[page_start: page_start + PAGE_SIZE]
+
+    selected_item = None
+    if category:
+        if item is not None:
+            selected_item = next((candidate for candidate in all_items if candidate.id == item), None)
+        if selected_item is None and items:
+            selected_item = items[0]
+
+    countries = sorted(country_counts)
+    categories = sorted(category_counts)
+    return HTMLResponse(
+        render_home(
+            items,
+            selected_item,
+            countries,
+            categories,
+            country_counts,
+            category_counts,
+            q,
+            country,
+            category,
+            page,
+            total_items,
+            total_pages,
+        )
     )
-    categories = list(
-        session.scalars(select(distinct(Item.category)).order_by(Item.category.asc())).all()
-    )
-    return HTMLResponse(render_home(items, selected_item, countries, categories, q, country, category))
 
 
 @ui_router.get("/admin/items/{item_id}", response_class=HTMLResponse)

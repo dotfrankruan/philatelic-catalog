@@ -20,6 +20,7 @@ BRACKET_TAG_RE = re.compile(r"\[([^\]]+)\]")
 EVENT_LINE_RE = re.compile(
     r"^(?P<timestamp>(?:[A-Za-z]+ \d{1,2}, \d{4}|\d{4}-\d{2}-\d{2}) \d{2}:\d{2})(?:,\s+|\s+)(?P<rest>.+)$"
 )
+LOCATION_PREFIX_RE = re.compile(r"^(?P<location>[\u4e00-\u9fffA-Za-z0-9 .'\-()/]+?)(?:\s{2,}|\s+-\s+|\s+)(?P<message>.+)$")
 TRACKING_METADATA_FILENAMES = {"manifest.txt"}
 TRACKING_METADATA_SUFFIXES = {".yaml", ".yml"}
 
@@ -316,7 +317,8 @@ def parse_tracking_event_line(line: str) -> ParsedTrackingEvent | None:
     occurred_at = parse_tracking_timestamp(match.group("timestamp"))
     if occurred_at is None:
         return None
-    rest_parts = [part.strip() for part in match.group("rest").split(", ", 2)]
+    rest = match.group("rest").strip()
+    rest_parts = split_tracking_rest(rest)
 
     location: str | None = None
     status: str
@@ -344,6 +346,36 @@ def parse_tracking_event_line(line: str) -> ParsedTrackingEvent | None:
         status=status,
         details=details,
     )
+
+
+def split_tracking_rest(rest: str) -> list[str]:
+    comma_parts = [part.strip() for part in re.split(r"\s*,\s*", rest) if part.strip()]
+    if len(comma_parts) >= 2:
+        if len(comma_parts) == 2:
+            return comma_parts
+        return [comma_parts[0], comma_parts[1], ", ".join(comma_parts[2:])]
+
+    prefix_match = LOCATION_PREFIX_RE.match(rest)
+    if prefix_match:
+        location = normalize_name(prefix_match.group("location"))
+        message = normalize_name(prefix_match.group("message"))
+        if location and message and is_probable_tracking_location(location):
+            return [location, message]
+
+    return [normalize_name(rest)]
+
+
+def is_probable_tracking_location(value: str) -> bool:
+    lowered = value.lower()
+    if lowered in STATUS_KEYWORDS:
+        return False
+    if re.search(r"[\u4e00-\u9fff]", value):
+        return True
+    if any(token in lowered for token in ("province", "city", "district", "depot", "office", "airport")):
+        return True
+    if re.fullmatch(r"[A-Z][A-Za-z.'()/-]+(?:\s+[A-Z][A-Za-z.'()/-]+)+", value):
+        return True
+    return False
 
 
 def derive_item_taxonomy(item_dir: Path) -> tuple[str, str, str, str]:

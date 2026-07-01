@@ -60,3 +60,16 @@ def test_importer_preview_uses_service(monkeypatch, tmp_path) -> None:
     assert "Latest Run" in response.text
     assert captured["dry_run"] is True
     assert captured["limit"] == 5
+
+
+def test_display_title_removes_embedded_bracket_tags() -> None:
+    assert ui_module.display_title("[govt] CC554844919NZ [fragile]") == "CC554844919NZ"
+
+
+def test_home_page_uses_hierarchical_browser() -> None:
+    with TestClient(app) as client:
+        response = client.get("/?country=Australia")
+
+        assert response.status_code == 200
+        assert "Choose a mail type" in response.text
+        assert "Mail Types" in response.text

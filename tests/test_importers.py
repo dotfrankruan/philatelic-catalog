@@ -45,6 +45,21 @@ Country: China -> Unknown
     assert events[0].location == "上海市"
 
 
+def test_parse_manifest_text_handles_lines_without_commas() -> None:
+    manifest = """Number: RD654726415CN
+2025-04-11 09:31 上海市 邮件正在派送中
+2025-04-11 08:19 Processing at international depot
+"""
+
+    _, _, _, events = parse_manifest_text(manifest)
+
+    assert len(events) == 2
+    assert events[0].location == "上海市"
+    assert events[0].status == "邮件正在派送中"
+    assert events[1].location is None
+    assert events[1].status == "Processing at international depot"
+
+
 def test_build_parsed_item_infers_tracking_and_flags(tmp_path: Path) -> None:
     source_root = tmp_path / "Letters"
     item_dir = source_root / "Mainland China" / "Postcards" / "[RETURN] 7000440251050 (Nanjing, Jiangsu)"
