@@ -366,7 +366,7 @@ def build_parsed_item(item_dir: Path, source_root: Path, archive_root: Path) -> 
         received_on=None,
         status=None,
         notes="\n".join(notes_parts),
-        is_returned="[RETURN]" in title.upper() or "(RETURNED)" in title.upper(),
+        is_returned=("[RETURN]" in title.upper() or "[RETOUR]" in title.upper() or "(RETURNED)" in title.upper()),
         is_self_mail="SELF-MAIL" in title.upper(),
         tags=tags,
         asset_files=asset_files,

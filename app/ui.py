@@ -195,15 +195,9 @@ def render_page(title: str, body: str) -> str:
         font-size: 14px;
       }}
 
-      .tracking-chip {{
-        display: inline-block;
-        padding: 4px 8px;
-        border-radius: 999px;
-        background: rgba(184, 106, 99, 0.10);
+      .item-title.returned,
+      .detail-title.returned {{
         color: #c27f78;
-        font-size: 12px;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
       }}
 
       .detail {{
@@ -382,12 +376,6 @@ def display_relpath(raw_relpath: str) -> str:
     return "/".join([*parts[:-1], cleaned_last])
 
 
-def title_matches_tracking(raw_title: str, tracking_number: str | None) -> bool:
-    if not tracking_number:
-        return False
-    return display_title(raw_title).strip().upper() == tracking_number.strip().upper()
-
-
 def resolve_archive_path(asset_path: str) -> Path:
     relative = Path(asset_path)
     resolved = (settings.managed_archive_root / relative).resolve()
@@ -447,20 +435,16 @@ def render_home(
                 active_class = " active" if item.id == selected_id else ""
                 href = build_filter_link(item.id, q, country, category)
                 title_text = display_title(item.title)
-                tracking_markup = (
-                    f'<span class="tracking-chip">{escape(item.tracking_number)}</span>'
-                    if item.tracking_number
-                    else f'<span class="item-sub">{escape(grouped_category)}</span>'
-                )
-                title_markup = (
-                    f'<div class="item-title">{escape(title_text)}</div>'
-                    if not title_matches_tracking(item.title, item.tracking_number)
-                    else ""
-                )
+                title_classes = "item-title"
+                if item.is_returned:
+                    title_classes += " returned"
+                subtitle_text = grouped_category
+                if item.tracking_number and title_text.strip().upper() != item.tracking_number.strip().upper():
+                    subtitle_text = item.tracking_number
                 item_links.append(
                     f'<a class="item-link{active_class}" href="{href}">'
-                    f"{title_markup}"
-                    f"<div>{tracking_markup}</div>"
+                    f'<div class="{title_classes}">{escape(title_text)}</div>'
+                    f'<div class="item-sub">{escape(subtitle_text)}</div>'
                     f"</a>"
                 )
             category_sections.append(
@@ -533,13 +517,10 @@ def render_home(
           <div class="detail-head">
             <div>
               <div class="eyebrow">{escape(selected_item.country)} Collection</div>
-              {f'<h2 class="detail-title">{escape(display_title(selected_item.title))}</h2>' if not title_matches_tracking(selected_item.title, selected_item.tracking_number) else ''}
+              <h2 class="detail-title{' returned' if selected_item.is_returned else ''}">{escape(display_title(selected_item.title))}</h2>
               <div class="subtitle">A lightweight archive view over your imported philatelic metadata and files.</div>
             </div>
-            <div class="pill-row">
-              {f'<span class="tracking-chip">{escape(selected_item.tracking_number)}</span>' if selected_item.tracking_number else ''}
-              {tag_pills or '<span class="pill">untagged</span>'}
-            </div>
+            <div class="pill-row">{tag_pills or '<span class="pill">untagged</span>'}</div>
           </div>
 
           <div class="meta-grid">{meta_markup}</div>
