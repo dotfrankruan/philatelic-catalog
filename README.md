@@ -35,6 +35,7 @@ The API will start at `http://127.0.0.1:8000`.
 ## First Endpoints
 
 - `GET /health`
+- `GET /`
 - `GET /items`
 - `POST /items`
 - `GET /items/{item_id}`
@@ -68,6 +69,7 @@ Notes:
 - `items` is the core entity.
 - `assets` stores related files and optional descriptive attributes such as `front`, `back`, `content`, `manifest`, or `invoice`.
 - `tracking_events` is separate from freeform notes so postal history stays queryable.
+- The built-in UI is server-rendered and intentionally lightweight, so there is no separate frontend build step.
 
 ## Next Good Steps
 
