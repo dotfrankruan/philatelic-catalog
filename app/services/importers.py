@@ -100,11 +100,17 @@ def normalize_name(raw_name: str) -> str:
 
 def extract_tags(raw_name: str) -> list[str]:
     tags = [tag.strip().lower().replace(" ", "-") for tag in BRACKET_TAG_RE.findall(raw_name)]
-    if "[RETURN]" in raw_name.upper():
-        tags.append("return")
+    normalized: list[str] = []
+    for tag in tags:
+        if tag in {"return", "returned", "retour"}:
+            normalized.append("returned")
+        else:
+            normalized.append(tag)
+    if "[RETURN]" in raw_name.upper() or "[RETOUR]" in raw_name.upper():
+        normalized.append("returned")
     if "SELF-MAIL" in raw_name.upper():
-        tags.append("self-mail")
-    return sorted(set(tag for tag in tags if tag))
+        normalized.append("self-mail")
+    return sorted(set(tag for tag in normalized if tag))
 
 
 def extract_origin(raw_name: str) -> str | None:

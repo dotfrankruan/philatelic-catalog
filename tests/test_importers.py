@@ -66,7 +66,7 @@ def test_build_parsed_item_infers_tracking_and_flags(tmp_path: Path) -> None:
     assert parsed.origin is None
     assert parsed.status is None
     assert parsed.is_returned is True
-    assert "return" in parsed.tags
+    assert "returned" in parsed.tags
 
 
 def test_import_letters_archive_copies_and_persists(tmp_path: Path) -> None:

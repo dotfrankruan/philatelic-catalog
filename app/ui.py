@@ -467,8 +467,9 @@ def render_home(
             "</div></section>"
         )
     else:
+        visible_tag_names = sorted({tag.name for tag in selected_item.tags if tag.name != "returned"})
         tag_pills = "".join(
-            f'<span class="pill">{escape(tag.name)}</span>' for tag in selected_item.tags
+            f'<span class="pill">{escape(tag_name)}</span>' for tag_name in visible_tag_names
         )
         if selected_item.is_returned:
             tag_pills += '<span class="pill">returned</span>'
