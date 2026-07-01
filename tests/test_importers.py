@@ -144,3 +144,29 @@ def test_import_letters_archive_accepts_single_item_directory(tmp_path: Path) ->
         assert item.country == "Belarus"
         assert item.category == "Postcards"
         assert item.source_relpath == "Belarus/Postcards/BY-3165002"
+
+
+def test_import_letters_archive_merges_existing_item_by_tracking_number(tmp_path: Path) -> None:
+    archive_root = tmp_path / "managed_archive"
+    original_dir = tmp_path / "Letters" / "Hong Kong" / "Postcards" / "AUG192024"
+    renamed_dir = tmp_path / "Letters" / "Hong Kong" / "Postcards" / "AUG192024 - Andy W"
+    original_dir.mkdir(parents=True)
+    renamed_dir.mkdir(parents=True)
+
+    (original_dir / "front.png").write_bytes(b"front-one")
+    (renamed_dir / "front.png").write_bytes(b"front-two")
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        first_summary = import_letters_archive(session, original_dir, archive_root)
+        second_summary = import_letters_archive(session, renamed_dir, archive_root)
+
+        assert first_summary.imported == 1
+        assert second_summary.updated == 1
+
+        items = list(session.scalars(select(Item)).all())
+        assert len(items) == 1
+        assert items[0].tracking_number == "AUG192024"
+        assert items[0].source_relpath == "Hong Kong/Postcards/AUG192024 - Andy W"

@@ -9,7 +9,7 @@ from collections.abc import Iterable
 import uuid
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import Asset, Item, Tag, TrackingEvent
@@ -467,18 +467,33 @@ def get_or_create_tag(session: Session, tag_name: str) -> Tag:
     return created
 
 
-def upsert_item_from_parsed(
-    session: Session, parsed: ParsedItem, archive_root: Path, dry_run: bool
-) -> tuple[Item | None, bool, int, int]:
-    existing = session.scalar(
+def find_existing_item(session: Session, parsed: ParsedItem) -> Item | None:
+    query = (
         select(Item)
         .options(
             selectinload(Item.assets),
             selectinload(Item.tags),
             selectinload(Item.tracking_events),
         )
-        .where(Item.source_relpath == parsed.source_relpath)
     )
+
+    if parsed.tracking_number:
+        return session.scalar(
+            query.where(
+                or_(
+                    Item.source_relpath == parsed.source_relpath,
+                    Item.tracking_number == parsed.tracking_number,
+                )
+            )
+        )
+
+    return session.scalar(query.where(Item.source_relpath == parsed.source_relpath))
+
+
+def upsert_item_from_parsed(
+    session: Session, parsed: ParsedItem, archive_root: Path, dry_run: bool
+) -> tuple[Item | None, bool, int, int]:
+    existing = find_existing_item(session, parsed)
 
     created = existing is None
     item = existing or Item()
