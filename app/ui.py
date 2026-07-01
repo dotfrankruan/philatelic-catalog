@@ -507,6 +507,10 @@ def render_page(title: str, body: str) -> str:
         background: rgba(255,255,255,0.58);
       }}
 
+      .uploader-status {{
+        margin-top: 14px;
+      }}
+
       .hint-list {{
         margin: 0;
         padding-left: 18px;
@@ -1373,6 +1377,23 @@ def render_importer(
               <button type="button" onclick="submitUploadForm('import')">Upload and Import</button>
             </div>
           </form>
+          <div class="uploader-status">
+            <div class="meta-card">
+              <div class="meta-label">Selected Folder</div>
+              <div class="meta-value" id="upload-root">No folder selected</div>
+              <div class="item-sub" id="upload-count">0 files selected</div>
+            </div>
+          </div>
+
+          <section class="section" id="upload-progress-shell" style="display:none;">
+            <h2>Upload Progress</h2>
+            <div class="meta-card">
+              <div class="meta-label">Transfer</div>
+              <div class="progress-bar"><div class="progress-fill" id="upload-progress" style="width:0%;"></div></div>
+              <div class="item-sub" id="upload-progress-text">0%</div>
+              <div class="item-sub" id="upload-progress-detail">Waiting to upload...</div>
+            </div>
+          </section>
 
           <section class="section">
           <h2>How It Works</h2>
@@ -1396,6 +1417,28 @@ def render_importer(
       </div>
       {script_markup}
       <script>
+      function updateUploadSelectionSummary() {{
+        const input = document.getElementById("upload-files");
+        const root = document.getElementById("upload-root");
+        const count = document.getElementById("upload-count");
+        if (!input.files || input.files.length === 0) {{
+          root.textContent = "No folder selected";
+          count.textContent = "0 files selected";
+          return;
+        }}
+        const firstPath = input.files[0].webkitRelativePath || input.files[0].name;
+        const rootName = firstPath.split("/")[0] || "Uploaded folder";
+        root.textContent = rootName;
+        count.textContent = input.files.length + " file" + (input.files.length === 1 ? "" : "s") + " selected";
+      }}
+
+      function setUploadProgress(percent, detail) {{
+        document.getElementById("upload-progress-shell").style.display = "block";
+        document.getElementById("upload-progress").style.width = percent + "%";
+        document.getElementById("upload-progress-text").textContent = percent + "%";
+        document.getElementById("upload-progress-detail").textContent = detail;
+      }}
+
       async function submitUploadForm(mode) {{
         const input = document.getElementById("upload-files");
         const limit = document.getElementById("upload-limit").value;
@@ -1409,15 +1452,30 @@ def render_importer(
         for (const file of input.files) {{
           formData.append("files", file, file.webkitRelativePath || file.name);
         }}
-        const response = await fetch("/import/upload", {{
-          method: "POST",
-          body: formData,
-        }});
-        const html = await response.text();
-        document.open();
-        document.write(html);
-        document.close();
+        setUploadProgress(0, "Preparing upload...");
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", "/import/upload");
+        xhr.upload.onprogress = (event) => {{
+          if (!event.lengthComputable) {{
+            setUploadProgress(0, "Uploading files...");
+            return;
+          }}
+          const percent = Math.max(1, Math.min(100, Math.round((event.loaded / event.total) * 100)));
+          setUploadProgress(percent, "Uploaded " + event.loaded.toLocaleString() + " / " + event.total.toLocaleString() + " bytes");
+        }};
+        xhr.onload = () => {{
+          setUploadProgress(100, "Upload complete. Loading importer results...");
+          document.open();
+          document.write(xhr.responseText);
+          document.close();
+        }};
+        xhr.onerror = () => {{
+          setUploadProgress(0, "Upload failed.");
+          window.alert("Upload failed. Please try again.");
+        }};
+        xhr.send(formData);
       }}
+      document.getElementById("upload-files")?.addEventListener("change", updateUploadSelectionSummary);
       </script>
     </main>
     """

@@ -32,6 +32,10 @@ def test_importer_page_renders() -> None:
         assert "Batch Importer" in response.text
         assert "Preview Import" in response.text
         assert "Upload Folder" in response.text
+        assert "Selected Folder" in response.text
+        assert "Upload Progress" in response.text
+        assert "updateUploadSelectionSummary" in response.text
+        assert "xhr.upload.onprogress" in response.text
 
 
 def test_importer_preview_uses_service(monkeypatch, tmp_path) -> None:
