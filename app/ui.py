@@ -5,17 +5,24 @@ from html import escape
 from pathlib import Path
 import re
 import subprocess
+import threading
 from urllib.parse import parse_qs, urlencode
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import distinct, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import settings
-from app.db.database import get_session
+from app.db.database import SessionLocal, get_session
 from app.models import Asset, Item, Tag, TrackingEvent
-from app.services.importers import ImportSummary, import_letter_sources
+from app.services.importers import (
+    ImportPreviewRow,
+    ImportSummary,
+    describe_import_letter_sources,
+    import_letter_sources,
+)
 from app.services.items import build_item_query
 
 ui_router = APIRouter(include_in_schema=False)
@@ -24,6 +31,8 @@ IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".heif", ".heic", ".avif", ".tiff"}
 HEIF_SUFFIXES = {".heif", ".heic"}
 DISPLAY_MARKER_RE = re.compile(r"\[[^\]]+\]")
 PAGE_SIZE = 12
+IMPORT_JOBS: dict[str, dict[str, object]] = {}
+IMPORT_JOBS_LOCK = threading.Lock()
 
 
 def render_page(title: str, body: str) -> str:
@@ -464,6 +473,38 @@ def render_page(title: str, body: str) -> str:
         margin-bottom: 18px;
       }}
 
+      .progress-shell {{
+        margin-bottom: 18px;
+      }}
+
+      .progress-bar {{
+        width: 100%;
+        height: 14px;
+        border-radius: 999px;
+        background: rgba(213, 200, 180, 0.8);
+        overflow: hidden;
+        margin: 10px 0 8px;
+      }}
+
+      .progress-fill {{
+        height: 100%;
+        background: linear-gradient(90deg, var(--accent), #d58b5f);
+        width: 0%;
+        transition: width 0.25s ease;
+      }}
+
+      .preview-list {{
+        display: grid;
+        gap: 12px;
+      }}
+
+      .preview-card {{
+        padding: 14px 16px;
+        border-radius: 18px;
+        border: 1px solid rgba(213, 200, 180, 0.7);
+        background: rgba(255,255,255,0.58);
+      }}
+
       .hint-list {{
         margin: 0;
         padding-left: 18px;
@@ -669,6 +710,86 @@ def parse_limit_input(raw_limit: str) -> int | None:
     if value <= 0:
         raise HTTPException(status_code=400, detail="Limit must be greater than zero.")
     return value
+
+
+def snapshot_job(job_id: str) -> dict[str, object] | None:
+    with IMPORT_JOBS_LOCK:
+        job = IMPORT_JOBS.get(job_id)
+        if job is None:
+            return None
+        return dict(job)
+
+
+def update_job(job_id: str, **changes: object) -> None:
+    with IMPORT_JOBS_LOCK:
+        if job_id not in IMPORT_JOBS:
+            return
+        IMPORT_JOBS[job_id].update(changes)
+
+
+def start_import_job(source_paths: list[Path], limit: int | None) -> str:
+    job_id = uuid.uuid4().hex
+    with IMPORT_JOBS_LOCK:
+        IMPORT_JOBS[job_id] = {
+            "job_id": job_id,
+            "state": "queued",
+            "completed": 0,
+            "total": 0,
+            "current_item": "",
+            "summary": None,
+            "error": None,
+        }
+
+    def run() -> None:
+        with SessionLocal() as session:
+            try:
+                update_job(job_id, state="running")
+
+                def on_progress(index: int, total: int, parsed, summary: ImportSummary) -> None:
+                    update_job(
+                        job_id,
+                        completed=index,
+                        total=total,
+                        current_item=display_title(parsed.title),
+                        summary={
+                            "scanned": summary.scanned,
+                            "imported": summary.imported,
+                            "updated": summary.updated,
+                            "copied_assets": summary.copied_assets,
+                            "tracking_events": summary.tracking_events,
+                            "dry_run": summary.dry_run,
+                        },
+                    )
+
+                summary = import_letter_sources(
+                    session,
+                    source_paths,
+                    settings.managed_archive_root,
+                    dry_run=False,
+                    limit=limit,
+                    progress_callback=on_progress,
+                )
+                update_job(
+                    job_id,
+                    state="completed",
+                    completed=summary.scanned,
+                    total=summary.scanned,
+                    current_item="",
+                    summary={
+                        "scanned": summary.scanned,
+                        "imported": summary.imported,
+                        "updated": summary.updated,
+                        "copied_assets": summary.copied_assets,
+                        "tracking_events": summary.tracking_events,
+                        "dry_run": summary.dry_run,
+                    },
+                )
+            except Exception as exc:
+                session.rollback()
+                update_job(job_id, state="failed", error=str(exc))
+
+    threading.Thread(target=run, daemon=True).start()
+    return job_id
 
 
 def build_asset_public_path(asset_path: str, suffix: str) -> str:
@@ -1017,8 +1138,11 @@ def render_importer(
     source_paths: str,
     limit: str,
     summary: ImportSummary | None = None,
+    previews: list[ImportPreviewRow] | None = None,
     error: str | None = None,
     executed_mode: str | None = None,
+    job_id: str | None = None,
+    job: dict[str, object] | None = None,
 ) -> str:
     message = ""
     if error:
@@ -1026,6 +1150,10 @@ def render_importer(
     elif summary is not None:
         headline = "Dry run complete." if summary.dry_run else "Import complete."
         message = f'<div class="flash">{headline}</div>'
+    elif job_id and job:
+        state = str(job.get("state", "queued"))
+        state_label = "Import queued." if state == "queued" else "Import in progress."
+        message = f'<div class="flash">{state_label}</div>'
 
     summary_markup = ""
     if summary is not None:
@@ -1050,13 +1178,77 @@ def render_importer(
             + "</section>"
         )
 
+    progress_markup = ""
+    script_markup = ""
+    if job_id and job:
+        state = str(job.get("state", "queued"))
+        completed = int(job.get("completed", 0) or 0)
+        total = int(job.get("total", 0) or 0)
+        current_item = str(job.get("current_item", "") or "")
+        percent = 0 if total <= 0 else int((completed / total) * 100)
+        progress_markup = f"""
+        <section class="section progress-shell">
+          <h2>Live Progress</h2>
+          <div class="meta-card">
+            <div class="meta-label">State</div>
+            <div class="meta-value" id="import-state">{escape(state.title())}</div>
+            <div class="progress-bar"><div class="progress-fill" id="import-progress" style="width:{percent}%;"></div></div>
+            <div class="item-sub" id="import-progress-text">{completed} / {total or '?'}</div>
+            <div class="item-sub" id="import-current-item">{escape(current_item or 'Waiting to start...')}</div>
+          </div>
+        </section>
+        """
+        script_markup = f"""
+        <script>
+        const importJobId = {job_id!r};
+        async function pollImportJob() {{
+          const response = await fetch(`/import/jobs/${{importJobId}}`);
+          if (!response.ok) return;
+          const payload = await response.json();
+          const total = payload.total || 0;
+          const completed = payload.completed || 0;
+          const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+          document.getElementById("import-state").textContent = (payload.state || "queued").replace(/^./, c => c.toUpperCase());
+          document.getElementById("import-progress").style.width = `${{percent}}%`;
+          document.getElementById("import-progress-text").textContent = `${{completed}} / ${{total || "?"}}`;
+          document.getElementById("import-current-item").textContent = payload.current_item || "Waiting to start...";
+          if (payload.state === "completed" || payload.state === "failed") {{
+            window.location.reload();
+            return;
+          }}
+          window.setTimeout(pollImportJob, 800);
+        }}
+        window.setTimeout(pollImportJob, 300);
+        </script>
+        """
+
+    preview_markup = ""
+    if previews:
+        preview_markup = (
+            '<section class="section"><h2>Dry Run Items</h2><div class="preview-list">'
+            + "".join(
+                f'<article class="preview-card">'
+                f'<div class="item-country">{escape(row.country)} / {escape(row.category)}</div>'
+                f'<div class="item-title">{escape(display_title(row.title))}</div>'
+                f'<div class="item-sub">{escape(row.tracking_number or "No tracking number")}</div>'
+                f'<div class="item-sub">Location: {escape(row.location or "N/A")}</div>'
+                f'<div class="item-sub">Action: {escape(row.action)} | Assets: {row.asset_count} | Tracking events: {row.tracking_event_count}</div>'
+                f'<div class="item-sub">{escape(display_relpath(row.source_relpath))}</div>'
+                f'</article>'
+                for row in previews
+            )
+            + "</div></section>"
+        )
+
     body = f"""
     <main class="main" style="max-width: 1200px; margin: 0 auto;">
       <div class="eyebrow">Philatelic Catalog</div>
       <h1>Batch Importer</h1>
       <p class="subtitle">Paste one or more folders, preview the scan, then import them into the managed archive.</p>
       {message}
+      {progress_markup}
       {summary_markup}
+      {preview_markup}
       <div class="admin-grid">
         <section class="panel admin-form">
           <h2>Import Queue</h2>
@@ -1093,6 +1285,7 @@ def render_importer(
           </section>
         </section>
       </div>
+      {script_markup}
     </main>
     """
     return render_page("Philatelic Catalog Importer", body)
@@ -1183,10 +1376,21 @@ def importer_page() -> HTMLResponse:
             source_paths="/Volumes/Frank Ruan Database/MediaLibrary/Letters",
             limit="",
             summary=None,
+            previews=None,
             error=None,
             executed_mode=None,
+            job_id=None,
+            job=None,
         )
     )
+
+
+@ui_router.get("/import/jobs/{job_id}", response_class=JSONResponse)
+def importer_job_status(job_id: str) -> JSONResponse:
+    job = snapshot_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Import job not found")
+    return JSONResponse(job)
 
 
 @ui_router.post("/import", response_class=HTMLResponse)
@@ -1203,11 +1407,26 @@ async def importer_run(
     try:
         source_paths = parse_source_paths_input(source_paths_raw)
         limit = parse_limit_input(limit_raw)
-        summary = import_letter_sources(
+        if mode == "import":
+            job_id = start_import_job(source_paths, limit)
+            job = snapshot_job(job_id)
+            return HTMLResponse(
+                render_importer(
+                    source_paths=source_paths_raw,
+                    limit=limit_raw,
+                    summary=None,
+                    previews=None,
+                    error=None,
+                    executed_mode=mode,
+                    job_id=job_id,
+                    job=job,
+                )
+            )
+
+        summary, previews = describe_import_letter_sources(
             session,
             source_paths,
             settings.managed_archive_root,
-            dry_run=(mode != "import"),
             limit=limit,
         )
     except HTTPException as exc:
@@ -1217,8 +1436,11 @@ async def importer_run(
                 source_paths=source_paths_raw,
                 limit=limit_raw,
                 summary=None,
+                previews=None,
                 error=detail,
                 executed_mode=mode,
+                job_id=None,
+                job=None,
             ),
             status_code=exc.status_code,
         )
@@ -1228,8 +1450,11 @@ async def importer_run(
                 source_paths=source_paths_raw,
                 limit=limit_raw,
                 summary=None,
+                previews=None,
                 error=str(exc),
                 executed_mode=mode,
+                job_id=None,
+                job=None,
             ),
             status_code=500,
         )
@@ -1239,8 +1464,11 @@ async def importer_run(
             source_paths=source_paths_raw,
             limit=limit_raw,
             summary=summary,
+            previews=previews,
             error=None,
             executed_mode=mode,
+            job_id=None,
+            job=None,
         )
     )
 

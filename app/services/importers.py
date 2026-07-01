@@ -5,7 +5,7 @@ from datetime import date, datetime
 import re
 import shutil
 from pathlib import Path
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 import uuid
 from typing import Any
 
@@ -79,6 +79,19 @@ class ImportSummary:
     copied_assets: int = 0
     tracking_events: int = 0
     dry_run: bool = False
+
+
+@dataclass
+class ImportPreviewRow:
+    country: str
+    category: str
+    title: str
+    tracking_number: str | None
+    source_relpath: str
+    location: str | None
+    asset_count: int
+    tracking_event_count: int
+    action: str
 
 
 def is_visible_file(path: Path) -> bool:
@@ -500,6 +513,48 @@ def find_existing_item(session: Session, parsed: ParsedItem) -> Item | None:
     return session.scalar(query.where(Item.source_relpath == parsed.source_relpath))
 
 
+def describe_import_letter_sources(
+    session: Session,
+    source_paths: Iterable[Path],
+    archive_root: Path,
+    *,
+    limit: int | None = None,
+) -> tuple[ImportSummary, list[ImportPreviewRow]]:
+    del archive_root
+    summary = ImportSummary(dry_run=True)
+    previews: list[ImportPreviewRow] = []
+    item_directories = discover_item_directories_for_sources(source_paths)
+    if limit is not None:
+        item_directories = item_directories[:limit]
+
+    for item_dir in item_directories:
+        parsed = build_parsed_item(item_dir)
+        existing = find_existing_item(session, parsed)
+        action = "update" if existing is not None else "import"
+        summary.scanned += 1
+        if existing is None:
+            summary.imported += 1
+        else:
+            summary.updated += 1
+        summary.copied_assets += len(parsed.asset_files)
+        summary.tracking_events += len(parsed.tracking_events)
+        previews.append(
+            ImportPreviewRow(
+                country=parsed.country,
+                category=parsed.category,
+                title=parsed.title,
+                tracking_number=parsed.tracking_number,
+                source_relpath=parsed.source_relpath,
+                location=parsed.origin,
+                asset_count=len(parsed.asset_files),
+                tracking_event_count=len(parsed.tracking_events),
+                action=action,
+            )
+        )
+
+    return summary, previews
+
+
 def upsert_item_from_parsed(
     session: Session, parsed: ParsedItem, archive_root: Path, dry_run: bool
 ) -> tuple[Item | None, bool, int, int]:
@@ -588,13 +643,16 @@ def import_letter_sources(
     *,
     dry_run: bool = False,
     limit: int | None = None,
+    progress_callback: Callable[[int, int, ParsedItem, ImportSummary], None] | None = None,
 ) -> ImportSummary:
     summary = ImportSummary(dry_run=dry_run)
     item_directories = discover_item_directories_for_sources(source_paths)
+    total = len(item_directories)
     if limit is not None:
         item_directories = item_directories[:limit]
+        total = len(item_directories)
 
-    for item_dir in item_directories:
+    for index, item_dir in enumerate(item_directories, start=1):
         parsed = build_parsed_item(item_dir)
         summary.scanned += 1
         _, created, copied_assets, added_events = upsert_item_from_parsed(
@@ -606,6 +664,8 @@ def import_letter_sources(
             summary.updated += 1
         summary.copied_assets += copied_assets
         summary.tracking_events += added_events
+        if progress_callback is not None:
+            progress_callback(index, total, parsed, summary)
 
     if dry_run:
         session.rollback()

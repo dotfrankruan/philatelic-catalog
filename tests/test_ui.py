@@ -39,14 +39,32 @@ def test_importer_preview_uses_service(monkeypatch, tmp_path) -> None:
 
     captured: dict[str, object] = {}
 
-    def fake_import_letter_sources(session, source_paths, archive_root, *, dry_run=False, limit=None):
-        captured["dry_run"] = dry_run
+    def fake_describe_import_letter_sources(session, source_paths, archive_root, *, limit=None):
         captured["limit"] = limit
         captured["source_paths"] = list(source_paths)
         captured["archive_root"] = archive_root
-        return ImportSummary(scanned=3, imported=0, updated=0, copied_assets=0, tracking_events=7, dry_run=True)
+        return (
+            ImportSummary(scanned=3, imported=2, updated=1, copied_assets=4, tracking_events=7, dry_run=True),
+            [
+                type(
+                    "PreviewRow",
+                    (),
+                    {
+                        "country": "Mainland China",
+                        "category": "EMS",
+                        "title": "1015382228937 (Guangzhou, Guangdong)",
+                        "tracking_number": "1015382228937",
+                        "source_relpath": "Mainland China/EMS/1015382228937 (Guangzhou, Guangdong)",
+                        "location": "Guangzhou, Guangdong",
+                        "asset_count": 4,
+                        "tracking_event_count": 15,
+                        "action": "update",
+                    },
+                )()
+            ],
+        )
 
-    monkeypatch.setattr(ui_module, "import_letter_sources", fake_import_letter_sources)
+    monkeypatch.setattr(ui_module, "describe_import_letter_sources", fake_describe_import_letter_sources)
 
     with TestClient(app) as client:
         response = client.post(
@@ -58,8 +76,46 @@ def test_importer_preview_uses_service(monkeypatch, tmp_path) -> None:
     assert response.status_code == 200
     assert "Dry run complete." in response.text
     assert "Latest Run" in response.text
-    assert captured["dry_run"] is True
+    assert "Dry Run Items" in response.text
+    assert "1015382228937" in response.text
     assert captured["limit"] == 5
+
+
+def test_importer_run_starts_background_job(monkeypatch, tmp_path) -> None:
+    source_root = tmp_path / "Letters"
+    source_root.mkdir()
+
+    monkeypatch.setattr(ui_module, "start_import_job", lambda source_paths, limit: "job-123")
+    monkeypatch.setattr(
+        ui_module,
+        "snapshot_job",
+        lambda job_id: {"job_id": job_id, "state": "running", "completed": 1, "total": 3, "current_item": "A"},
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/import",
+            content=f"source_paths={source_root.as_posix()}&mode=import",
+            headers={"content-type": "application/x-www-form-urlencoded"},
+        )
+
+    assert response.status_code == 200
+    assert "Live Progress" in response.text
+    assert "job-123" in response.text
+
+
+def test_importer_job_status_returns_json(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ui_module,
+        "snapshot_job",
+        lambda job_id: {"job_id": job_id, "state": "completed", "completed": 3, "total": 3},
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/import/jobs/job-123")
+
+    assert response.status_code == 200
+    assert response.json()["state"] == "completed"
 
 
 def test_display_title_removes_embedded_bracket_tags() -> None:
