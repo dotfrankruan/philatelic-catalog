@@ -382,6 +382,12 @@ def display_relpath(raw_relpath: str) -> str:
     return "/".join([*parts[:-1], cleaned_last])
 
 
+def title_matches_tracking(raw_title: str, tracking_number: str | None) -> bool:
+    if not tracking_number:
+        return False
+    return display_title(raw_title).strip().upper() == tracking_number.strip().upper()
+
+
 def resolve_archive_path(asset_path: str) -> Path:
     relative = Path(asset_path)
     resolved = (settings.managed_archive_root / relative).resolve()
@@ -440,14 +446,20 @@ def render_home(
             for item in grouped_items:
                 active_class = " active" if item.id == selected_id else ""
                 href = build_filter_link(item.id, q, country, category)
+                title_text = display_title(item.title)
                 tracking_markup = (
                     f'<span class="tracking-chip">{escape(item.tracking_number)}</span>'
                     if item.tracking_number
                     else f'<span class="item-sub">{escape(grouped_category)}</span>'
                 )
+                title_markup = (
+                    f'<div class="item-title">{escape(title_text)}</div>'
+                    if not title_matches_tracking(item.title, item.tracking_number)
+                    else ""
+                )
                 item_links.append(
                     f'<a class="item-link{active_class}" href="{href}">'
-                    f'<div class="item-title">{escape(display_title(item.title))}</div>'
+                    f"{title_markup}"
                     f"<div>{tracking_markup}</div>"
                     f"</a>"
                 )
@@ -521,7 +533,7 @@ def render_home(
           <div class="detail-head">
             <div>
               <div class="eyebrow">{escape(selected_item.country)} Collection</div>
-              <h2 class="detail-title">{escape(display_title(selected_item.title))}</h2>
+              {f'<h2 class="detail-title">{escape(display_title(selected_item.title))}</h2>' if not title_matches_tracking(selected_item.title, selected_item.tracking_number) else ''}
               <div class="subtitle">A lightweight archive view over your imported philatelic metadata and files.</div>
             </div>
             <div class="pill-row">

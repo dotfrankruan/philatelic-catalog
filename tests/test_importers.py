@@ -28,6 +28,23 @@ Powered by www.17track.net
     assert events[1].status == "Picked up/Collected"
 
 
+def test_parse_manifest_text_supports_numeric_dates() -> None:
+    manifest = """Number: RD654726415CN
+Package status: Delivered (60 Days)
+Country: China -> Unknown
+2025-04-11 09:31 上海市, 您的邮件已代收【信报箱，xinxiang】
+2025-04-11 08:19 上海市, 邮件正在派送中
+"""
+
+    tracking_number, status, route, events = parse_manifest_text(manifest)
+
+    assert tracking_number == "RD654726415CN"
+    assert status == "Delivered (60 Days)"
+    assert route == "China -> Unknown"
+    assert len(events) == 2
+    assert events[0].location == "上海市"
+
+
 def test_build_parsed_item_infers_tracking_and_flags(tmp_path: Path) -> None:
     source_root = tmp_path / "Letters"
     item_dir = source_root / "Mainland China" / "Postcards" / "[RETURN] 7000440251050 (Nanjing, Jiangsu)"

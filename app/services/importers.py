@@ -16,7 +16,9 @@ from app.models import Asset, Item, Tag, TrackingEvent
 HIDDEN_PREFIXES = (".", "._")
 TRACKING_TOKEN_RE = re.compile(r"[A-Z0-9-]{6,}")
 BRACKET_TAG_RE = re.compile(r"\[([^\]]+)\]")
-EVENT_LINE_RE = re.compile(r"^(?P<timestamp>[A-Za-z]+ \d{1,2}, \d{4} \d{2}:\d{2}), (?P<rest>.+)$")
+EVENT_LINE_RE = re.compile(
+    r"^(?P<timestamp>(?:[A-Za-z]+ \d{1,2}, \d{4}|\d{4}-\d{2}-\d{2}) \d{2}:\d{2})(?:,\s+|\s+)(?P<rest>.+)$"
+)
 TRACKING_METADATA_FILENAMES = {"manifest.txt"}
 TRACKING_METADATA_SUFFIXES = {".yaml", ".yml"}
 
@@ -281,7 +283,9 @@ def parse_tracking_event_line(line: str) -> ParsedTrackingEvent | None:
     match = EVENT_LINE_RE.match(line)
     if not match:
         return None
-    occurred_at = datetime.strptime(match.group("timestamp"), "%B %d, %Y %H:%M")
+    occurred_at = parse_tracking_timestamp(match.group("timestamp"))
+    if occurred_at is None:
+        return None
     rest_parts = [part.strip() for part in match.group("rest").split(", ", 2)]
 
     location: str | None = None
