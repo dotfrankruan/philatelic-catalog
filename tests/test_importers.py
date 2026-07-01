@@ -4,7 +4,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.db.database import Base
-from app.models import Item
+from app.models import Item, TrackingEvent
 from app.services.importers import build_parsed_item, import_letters_archive, parse_manifest_text
 
 
@@ -58,6 +58,21 @@ def test_parse_manifest_text_handles_lines_without_commas() -> None:
     assert events[0].status == "邮件正在派送中"
     assert events[1].location is None
     assert events[1].status == "Processing at international depot"
+
+
+def test_parse_manifest_text_keeps_city_and_8_digit_office_code_in_location() -> None:
+    manifest = """Number: 1015382228937
+2025-09-26 14:12 上海市 20006208 快件到达【上海市普陀区云岭揽投部】
+2025-09-23 12:11 广州市 51018010 中国邮政 已收取快件
+"""
+
+    _, _, _, events = parse_manifest_text(manifest)
+
+    assert len(events) == 2
+    assert events[0].location == "上海市 20006208"
+    assert events[0].status == "快件到达【上海市普陀区云岭揽投部】"
+    assert events[1].location == "广州市 51018010"
+    assert events[1].status == "中国邮政 已收取快件"
 
 
 def test_build_parsed_item_infers_tracking_and_flags(tmp_path: Path) -> None:
@@ -170,3 +185,62 @@ def test_import_letters_archive_merges_existing_item_by_tracking_number(tmp_path
         assert len(items) == 1
         assert items[0].tracking_number == "AUG192024"
         assert items[0].source_relpath == "Hong Kong/Postcards/AUG192024 - Andy W"
+
+
+def test_import_replaces_non_manual_tracking_events_but_keeps_manual_ones(tmp_path: Path) -> None:
+    source_root = tmp_path / "Letters"
+    archive_root = tmp_path / "managed_archive"
+    item_dir = source_root / "Mainland China" / "EMS" / "1015382228937"
+    item_dir.mkdir(parents=True)
+    (item_dir / "front.png").write_bytes(b"front")
+    (item_dir / "manifest.txt").write_text(
+        "\n".join(
+            [
+                "Number: 1015382228937",
+                "2025-09-26 14:12 上海市 20006208 快件到达【上海市普陀区云岭揽投部】",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        first_summary = import_letters_archive(session, source_root, archive_root)
+        assert first_summary.tracking_events == 1
+
+        item = session.scalar(select(Item))
+        assert item is not None
+        manual_event = TrackingEvent(
+            item_id=item.id,
+            occurred_at=item.tracking_events[0].occurred_at,
+            location="Manual Desk",
+            status="Checked by hand",
+            details=None,
+            source="manual",
+        )
+        session.add(manual_event)
+        session.commit()
+
+        (item_dir / "manifest.txt").write_text(
+            "\n".join(
+                [
+                    "Number: 1015382228937",
+                    "2025-09-26 14:12 上海市 20006208 快件到达【上海市普陀区云岭揽投部】",
+                    "2025-09-26 15:10 上海市 20006208 快件正在派送中",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        second_summary = import_letters_archive(session, source_root, archive_root)
+        assert second_summary.tracking_events == 2
+
+        refreshed = session.scalar(select(Item))
+        assert refreshed is not None
+        manifest_events = [event for event in refreshed.tracking_events if event.source != "manual"]
+        manual_events = [event for event in refreshed.tracking_events if event.source == "manual"]
+        assert len(manifest_events) == 2
+        assert len(manual_events) == 1
+        assert manifest_events[0].location == "上海市 20006208"

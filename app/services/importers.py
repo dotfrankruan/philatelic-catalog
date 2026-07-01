@@ -21,6 +21,9 @@ EVENT_LINE_RE = re.compile(
     r"^(?P<timestamp>(?:[A-Za-z]+ \d{1,2}, \d{4}|\d{4}-\d{2}-\d{2}) \d{2}:\d{2})(?:,\s+|\s+)(?P<rest>.+)$"
 )
 LOCATION_PREFIX_RE = re.compile(r"^(?P<location>[\u4e00-\u9fffA-Za-z0-9 .'\-()/]+?)(?:\s{2,}|\s+-\s+|\s+)(?P<message>.+)$")
+CHINA_POST_LOCATION_CODE_RE = re.compile(
+    r"^(?P<location>[\u4e00-\u9fffA-Za-z]+(?:省|市|区|县|州|盟|旗|特别行政区)?\s+\d{8})(?:\s+)(?P<message>.+)$"
+)
 TRACKING_METADATA_FILENAMES = {"manifest.txt"}
 TRACKING_METADATA_SUFFIXES = {".yaml", ".yml"}
 
@@ -355,6 +358,13 @@ def split_tracking_rest(rest: str) -> list[str]:
             return comma_parts
         return [comma_parts[0], comma_parts[1], ", ".join(comma_parts[2:])]
 
+    china_post_match = CHINA_POST_LOCATION_CODE_RE.match(rest)
+    if china_post_match:
+        location = normalize_name(china_post_match.group("location"))
+        message = normalize_name(china_post_match.group("message"))
+        if location and message:
+            return [location, message]
+
     prefix_match = LOCATION_PREFIX_RE.match(rest)
     if prefix_match:
         location = normalize_name(prefix_match.group("location"))
@@ -530,15 +540,15 @@ def upsert_item_from_parsed(
     for tag_name in parsed.tags:
         item.tags.append(get_or_create_tag(session, tag_name))
 
-    existing_events = {
-        (event.occurred_at, event.status, event.location or "", event.details or "")
-        for event in item.tracking_events
-    }
+    for event in list(item.tracking_events):
+        if (event.source or "").strip().lower() == "manual":
+            continue
+        session.delete(event)
+
+    session.flush()
+
     added_events = 0
     for event in parsed.tracking_events:
-        key = (event.occurred_at, event.status, event.location or "", event.details or "")
-        if key in existing_events:
-            continue
         session.add(
             TrackingEvent(
                 item_id=item.id,
