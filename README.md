@@ -44,6 +44,21 @@ The API will start at `http://127.0.0.1:8000`.
 - `POST /items/{item_id}/tracking-events`
 - `GET /tags`
 
+## Importing The Existing Archive
+
+Use the built-in importer to scan the old `Letters` tree, copy files into the managed archive, and write metadata into SQLite.
+
+```bash
+python scripts/import_letters.py '/Volumes/Frank Ruan Database/MediaLibrary/Letters' --dry-run --limit 10
+python scripts/import_letters.py '/Volumes/Frank Ruan Database/MediaLibrary/Letters' --recreate-db
+```
+
+Notes:
+
+- `--dry-run` parses items without copying files or writing the database.
+- `--limit` is useful for small trial runs.
+- `--recreate-db` is helpful while the schema is still evolving.
+
 ## Design Notes
 
 - The database stores paths, not binary files.

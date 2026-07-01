@@ -12,6 +12,8 @@ class ItemBase(BaseModel):
     category: str
     tracking_number: str | None = None
     title: str
+    source_path: str | None = None
+    archive_path: str | None = None
     origin: str | None = None
     destination: str | None = None
     sent_on: date | None = None
@@ -31,6 +33,8 @@ class ItemUpdate(BaseModel):
     category: str | None = None
     tracking_number: str | None = None
     title: str | None = None
+    source_path: str | None = None
+    archive_path: str | None = None
     origin: str | None = None
     destination: str | None = None
     sent_on: date | None = None
