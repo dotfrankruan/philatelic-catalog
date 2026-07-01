@@ -86,18 +86,35 @@ def test_importer_run_starts_background_job(monkeypatch, tmp_path) -> None:
     source_root.mkdir()
 
     monkeypatch.setattr(ui_module, "start_import_job", lambda source_paths, limit: "job-123")
-    monkeypatch.setattr(
-        ui_module,
-        "snapshot_job",
-        lambda job_id: {"job_id": job_id, "state": "running", "completed": 1, "total": 3, "current_item": "A"},
-    )
 
     with TestClient(app) as client:
         response = client.post(
             "/import",
             content=f"source_paths={source_root.as_posix()}&mode=import",
             headers={"content-type": "application/x-www-form-urlencoded"},
+            follow_redirects=False,
         )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/import?job_id=job-123"
+
+
+def test_importer_page_renders_existing_job_state(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ui_module,
+        "snapshot_job",
+        lambda job_id: {
+            "job_id": job_id,
+            "state": "running",
+            "completed": 1,
+            "total": 3,
+            "current_item": "A",
+            "summary": {"scanned": 1, "imported": 1, "updated": 0, "copied_assets": 2, "tracking_events": 4, "dry_run": False},
+        },
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/import?job_id=job-123")
 
     assert response.status_code == 200
     assert "Live Progress" in response.text

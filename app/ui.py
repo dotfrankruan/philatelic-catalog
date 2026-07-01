@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlencode
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import distinct, select
 from sqlalchemy.orm import Session, selectinload
 
@@ -1152,7 +1152,14 @@ def render_importer(
         message = f'<div class="flash">{headline}</div>'
     elif job_id and job:
         state = str(job.get("state", "queued"))
-        state_label = "Import queued." if state == "queued" else "Import in progress."
+        if state == "completed":
+            state_label = "Import complete."
+        elif state == "failed":
+            state_label = "Import failed."
+        elif state == "queued":
+            state_label = "Import queued."
+        else:
+            state_label = "Import in progress."
         message = f'<div class="flash">{state_label}</div>'
 
     summary_markup = ""
@@ -1175,6 +1182,28 @@ def render_importer(
             )
             + "</div>"
             + f'<div class="meta-card"><div class="meta-value">Mode: {escape(executed_mode or ("preview" if summary.dry_run else "import"))}</div></div>'
+            + "</section>"
+        )
+    elif job and isinstance(job.get("summary"), dict):
+        snapshot = job["summary"]
+        summary_cards = [
+            ("Scanned", str(snapshot.get("scanned", 0))),
+            ("Imported", str(snapshot.get("imported", 0))),
+            ("Updated", str(snapshot.get("updated", 0))),
+            ("Copied Assets", str(snapshot.get("copied_assets", 0))),
+            ("Tracking Events", str(snapshot.get("tracking_events", 0))),
+        ]
+        summary_markup = (
+            '<section class="section">'
+            '<h2>Latest Run</h2>'
+            '<div class="summary-grid">'
+            + "".join(
+                f'<article class="meta-card"><div class="meta-label">{escape(label)}</div>'
+                f'<div class="meta-value">{escape(value)}</div></article>'
+                for label, value in summary_cards
+            )
+            + "</div>"
+            + '<div class="meta-card"><div class="meta-value">Mode: import</div></div>'
             + "</section>"
         )
 
@@ -1213,7 +1242,7 @@ def render_importer(
           document.getElementById("import-progress-text").textContent = `${{completed}} / ${{total || "?"}}`;
           document.getElementById("import-current-item").textContent = payload.current_item || "Waiting to start...";
           if (payload.state === "completed" || payload.state === "failed") {{
-            window.location.reload();
+            window.location.href = `/import?job_id=${{importJobId}}`;
             return;
           }}
           window.setTimeout(pollImportJob, 800);
@@ -1370,17 +1399,29 @@ def admin_item(item_id: int, saved: int = 0, session: Session = Depends(get_sess
 
 
 @ui_router.get("/import", response_class=HTMLResponse)
-def importer_page() -> HTMLResponse:
+def importer_page(job_id: str | None = None) -> HTMLResponse:
+    job = snapshot_job(job_id) if job_id else None
+    summary = None
+    if job and isinstance(job.get("summary"), dict):
+        payload = job["summary"]
+        summary = ImportSummary(
+            scanned=int(payload.get("scanned", 0)),
+            imported=int(payload.get("imported", 0)),
+            updated=int(payload.get("updated", 0)),
+            copied_assets=int(payload.get("copied_assets", 0)),
+            tracking_events=int(payload.get("tracking_events", 0)),
+            dry_run=bool(payload.get("dry_run", False)),
+        )
     return HTMLResponse(
         render_importer(
             source_paths="/Volumes/Frank Ruan Database/MediaLibrary/Letters",
             limit="",
-            summary=None,
+            summary=summary,
             previews=None,
-            error=None,
+            error=str(job.get("error")) if job and job.get("error") else None,
             executed_mode=None,
-            job_id=None,
-            job=None,
+            job_id=job_id,
+            job=job,
         )
     )
 
@@ -1397,7 +1438,7 @@ def importer_job_status(job_id: str) -> JSONResponse:
 async def importer_run(
     request: Request,
     session: Session = Depends(get_session),
-) -> HTMLResponse:
+) -> Response:
     body = (await request.body()).decode("utf-8")
     form_data = parse_qs(body, keep_blank_values=True)
     source_paths_raw = get_form_value(form_data, "source_paths")
@@ -1409,19 +1450,7 @@ async def importer_run(
         limit = parse_limit_input(limit_raw)
         if mode == "import":
             job_id = start_import_job(source_paths, limit)
-            job = snapshot_job(job_id)
-            return HTMLResponse(
-                render_importer(
-                    source_paths=source_paths_raw,
-                    limit=limit_raw,
-                    summary=None,
-                    previews=None,
-                    error=None,
-                    executed_mode=mode,
-                    job_id=job_id,
-                    job=job,
-                )
-            )
+            return RedirectResponse(url=f"/import?job_id={job_id}", status_code=303)
 
         summary, previews = describe_import_letter_sources(
             session,
