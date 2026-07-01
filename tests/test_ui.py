@@ -11,3 +11,12 @@ def test_home_page_renders() -> None:
         assert "Archive Browser" in response.text
         assert "Philatelic Catalog" in response.text
         assert "Apply Filters" in response.text
+
+
+def test_admin_page_renders() -> None:
+    with TestClient(app) as client:
+        response = client.get("/admin/items/3")
+
+        assert response.status_code == 200
+        assert "Admin Console" in response.text
+        assert "Save Metadata" in response.text

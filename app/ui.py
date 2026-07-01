@@ -1,19 +1,20 @@
 from __future__ import annotations
 
+from datetime import datetime
 from html import escape
 from pathlib import Path
 import re
 import subprocess
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from sqlalchemy import distinct, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.config import settings
 from app.db.database import get_session
-from app.models import Asset, Item
+from app.models import Asset, Item, Tag, TrackingEvent
 from app.services.items import build_item_query
 
 ui_router = APIRouter(include_in_schema=False)
@@ -132,6 +133,11 @@ def render_page(title: str, body: str) -> str:
         color: var(--ink);
       }}
 
+      input[type="checkbox"] {{
+        width: auto;
+        margin-right: 8px;
+      }}
+
       button {{
         border: 0;
         border-radius: 999px;
@@ -232,6 +238,15 @@ def render_page(title: str, body: str) -> str:
         font-size: 13px;
       }}
 
+      .button-link {{
+        display: inline-block;
+        border-radius: 999px;
+        padding: 11px 16px;
+        background: rgba(156, 79, 45, 0.10);
+        color: var(--accent);
+        font-size: 14px;
+      }}
+
       .meta-grid {{
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -330,6 +345,49 @@ def render_page(title: str, body: str) -> str:
         color: var(--muted);
       }}
 
+      textarea {{
+        width: 100%;
+        min-height: 120px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: rgba(255,255,255,0.85);
+        padding: 10px 12px;
+        font: inherit;
+        color: var(--ink);
+        resize: vertical;
+      }}
+
+      .admin-grid {{
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        gap: 20px;
+      }}
+
+      .admin-form {{
+        padding: 18px;
+      }}
+
+      .admin-form form {{
+        display: grid;
+        gap: 12px;
+      }}
+
+      .flash {{
+        margin-bottom: 16px;
+        padding: 12px 14px;
+        border-radius: 14px;
+        background: rgba(97, 141, 92, 0.12);
+        color: #4f6d48;
+        border: 1px solid rgba(97, 141, 92, 0.25);
+      }}
+
+      .check-row {{
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--muted);
+      }}
+
       @media (max-width: 980px) {{
         .shell {{
           grid-template-columns: 1fr;
@@ -343,6 +401,10 @@ def render_page(title: str, body: str) -> str:
         }}
 
         .meta-grid {{
+          grid-template-columns: 1fr;
+        }}
+
+        .admin-grid {{
           grid-template-columns: 1fr;
         }}
       }}
@@ -381,6 +443,54 @@ def resolve_archive_path(asset_path: str) -> Path:
     resolved = (settings.managed_archive_root / relative).resolve()
     resolved.relative_to(settings.managed_archive_root.resolve())
     return resolved
+
+
+def get_item_or_404(session: Session, item_id: int) -> Item:
+    item = session.scalar(
+        select(Item).where(Item.id == item_id)
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return item
+
+
+def get_or_create_tag(session: Session, tag_name: str) -> Tag:
+    tag = session.scalar(select(Tag).where(Tag.name == tag_name))
+    if tag is None:
+        tag = Tag(name=tag_name)
+        session.add(tag)
+        session.flush()
+    return tag
+
+
+def parse_tag_input(raw_tags: str) -> list[str]:
+    parts = re.split(r"[,\\n]", raw_tags)
+    tags: list[str] = []
+    for part in parts:
+        tag = part.strip().lower().replace(" ", "-")
+        if not tag:
+            continue
+        if tag in {"return", "retour"}:
+            tag = "returned"
+        tags.append(tag)
+    return sorted(set(tags))
+
+
+def parse_datetime_input(raw_value: str) -> datetime:
+    cleaned = raw_value.strip()
+    for pattern in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M"):
+        try:
+            return datetime.strptime(cleaned, pattern)
+        except ValueError:
+            continue
+    raise HTTPException(status_code=400, detail="Invalid datetime format")
+
+
+def get_form_value(form_data: dict[str, list[str]], key: str, default: str = "") -> str:
+    values = form_data.get(key)
+    if not values:
+        return default
+    return values[0]
 
 
 def build_asset_public_path(asset_path: str, suffix: str) -> str:
@@ -521,7 +631,10 @@ def render_home(
               <h2 class="detail-title{' returned' if selected_item.is_returned else ''}">{escape(display_title(selected_item.title))}</h2>
               <div class="subtitle">A lightweight archive view over your imported philatelic metadata and files.</div>
             </div>
-            <div class="pill-row">{tag_pills or '<span class="pill">untagged</span>'}</div>
+            <div>
+              <div class="pill-row" style="justify-content:flex-end; margin-bottom:10px;">{tag_pills or '<span class="pill">untagged</span>'}</div>
+              <a class="button-link" href="/admin/items/{selected_item.id}">Open Admin Console</a>
+            </div>
           </div>
 
           <div class="meta-grid">{meta_markup}</div>
@@ -593,6 +706,67 @@ def render_home(
     return render_page("Philatelic Catalog", body)
 
 
+def render_admin(item: Item, saved: bool = False) -> str:
+    tag_value = ", ".join(sorted({tag.name for tag in item.tags}))
+    flash = '<div class="flash">Saved.</div>' if saved else ""
+    recent_events = sorted(item.tracking_events, key=lambda event: event.occurred_at, reverse=True)[:12]
+    event_cards = "".join(
+        f'<article class="event"><div class="event-time">{escape(event.occurred_at.isoformat(sep=" ", timespec="minutes"))}</div>'
+        f'<div><strong>{escape(event.status)}</strong></div>'
+        f'<div>{escape(event.location or "Unknown location")}</div>'
+        f'{f"<div>{escape(event.details)}</div>" if event.details else ""}</article>'
+        for event in recent_events
+    ) or '<div class="empty">No tracking events yet.</div>'
+
+    body = f"""
+    <main class="main" style="max-width: 1360px; margin: 0 auto;">
+      <div class="eyebrow">Philatelic Catalog</div>
+      <h1>Admin Console</h1>
+      <p class="subtitle">Fine-tune metadata and add manual tracking events for <strong>{escape(display_title(item.title))}</strong>.</p>
+      {flash}
+      <div class="admin-grid">
+        <section class="panel admin-form">
+          <h2>Item Metadata</h2>
+          <form method="post" action="/admin/items/{item.id}">
+            <label>Title<input type="text" name="title" value="{escape(item.title)}" /></label>
+            <label>Tracking Number<input type="text" name="tracking_number" value="{escape(item.tracking_number or '')}" /></label>
+            <label>Country<input type="text" name="country" value="{escape(item.country)}" /></label>
+            <label>Category<input type="text" name="category" value="{escape(item.category)}" /></label>
+            <label>Tags
+              <input type="text" name="tags" value="{escape(tag_value)}" placeholder="returned, self-mail, commemorative" />
+            </label>
+            <label>Notes<textarea name="notes">{escape(item.notes or '')}</textarea></label>
+            <label class="check-row"><input type="checkbox" name="is_returned" {"checked" if item.is_returned else ""} /> Returned</label>
+            <label class="check-row"><input type="checkbox" name="is_self_mail" {"checked" if item.is_self_mail else ""} /> Self mail</label>
+            <div>
+              <button type="submit">Save Metadata</button>
+              <a class="reset" href="/?item={item.id}">Back to Browser</a>
+            </div>
+          </form>
+        </section>
+
+        <section class="panel admin-form">
+          <h2>Add Tracking Event</h2>
+          <form method="post" action="/admin/items/{item.id}">
+            <input type="hidden" name="form_kind" value="tracking_event" />
+            <label>Occurred At<input type="text" name="event_occurred_at" placeholder="2025-04-11 09:31" /></label>
+            <label>Location<input type="text" name="event_location" placeholder="Shanghai" /></label>
+            <label>Status<input type="text" name="event_status" placeholder="Delivered" /></label>
+            <label>Details<textarea name="event_details"></textarea></label>
+            <div><button type="submit">Add Event</button></div>
+          </form>
+
+          <section class="section">
+            <h2>Recent Timeline Entries</h2>
+            <div class="timeline">{event_cards}</div>
+          </section>
+        </section>
+      </div>
+    </main>
+    """
+    return render_page("Philatelic Catalog Admin", body)
+
+
 @ui_router.get("/", response_class=HTMLResponse)
 def home(
     item: int | None = None,
@@ -623,6 +797,69 @@ def home(
         session.scalars(select(distinct(Item.category)).order_by(Item.category.asc())).all()
     )
     return HTMLResponse(render_home(items, selected_item, countries, categories, q, country, category))
+
+
+@ui_router.get("/admin/items/{item_id}", response_class=HTMLResponse)
+def admin_item(item_id: int, saved: int = 0, session: Session = Depends(get_session)) -> HTMLResponse:
+    item = session.scalar(
+        select(Item)
+        .where(Item.id == item_id)
+        .options(selectinload(Item.tags), selectinload(Item.tracking_events))
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return HTMLResponse(render_admin(item, saved=bool(saved)))
+
+
+@ui_router.post("/admin/items/{item_id}")
+async def admin_item_save(
+    item_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    item = get_item_or_404(session, item_id)
+    body = (await request.body()).decode("utf-8")
+    form_data = parse_qs(body, keep_blank_values=True)
+    form_kind = get_form_value(form_data, "form_kind", "metadata")
+
+    if form_kind == "tracking_event":
+        event_occurred_at = get_form_value(form_data, "event_occurred_at")
+        event_location = get_form_value(form_data, "event_location")
+        event_status = get_form_value(form_data, "event_status")
+        event_details = get_form_value(form_data, "event_details")
+        if event_occurred_at.strip() and event_status.strip():
+            occurred_at = parse_datetime_input(event_occurred_at)
+            session.add(
+                TrackingEvent(
+                    item_id=item.id,
+                    occurred_at=occurred_at,
+                    location=event_location.strip() or None,
+                    status=event_status.strip(),
+                    details=event_details.strip() or None,
+                    source="manual",
+                )
+            )
+    else:
+        title = get_form_value(form_data, "title")
+        tracking_number = get_form_value(form_data, "tracking_number")
+        country = get_form_value(form_data, "country")
+        category = get_form_value(form_data, "category")
+        tags = get_form_value(form_data, "tags")
+        notes = get_form_value(form_data, "notes")
+        item.title = title.strip() or item.title
+        item.tracking_number = tracking_number.strip() or None
+        item.country = country.strip() or item.country
+        item.category = category.strip() or item.category
+        item.notes = notes
+        item.is_returned = "is_returned" in form_data
+        item.is_self_mail = "is_self_mail" in form_data
+        item.tags.clear()
+        for tag_name in parse_tag_input(tags):
+            item.tags.append(get_or_create_tag(session, tag_name))
+
+    session.add(item)
+    session.commit()
+    return RedirectResponse(url=f"/admin/items/{item.id}?saved=1", status_code=303)
 
 
 @ui_router.get("/asset-preview", response_class=FileResponse)
